@@ -1,0 +1,76 @@
+# =====================
+# Python bytecode / cache (recursive)
+# =====================
+**/__pycache__/
+**/*.py[cod]
+**/*.pyo
+**/*.pyd
+**/*.pyc
+
+# =====================
+# Virtual environments (anywhere)
+# =====================
+**/venv/
+**/env/
+**/ENV/
+**/.venv/
+**/.env/
+
+# =====================
+# Distribution / build artifacts
+# =====================
+**/dist/
+**/build/
+**/*.egg-info/
+**/.eggs/
+**/pip-wheel-metadata/
+
+# =====================
+# Testing / coverage
+# =====================
+**/.pytest_cache/
+**/.coverage
+**/coverage.xml
+**/htmlcov/
+
+# =====================
+# Type checkers
+# =====================
+**/.mypy_cache/
+**/.dmypy.json
+
+# =====================
+# Pyramid / config / logs
+# =====================
+**/development.ini
+**/production.ini
+**/*.ini~
+**/*.log
+**/logs/
+
+# =====================
+# Environment variables
+# =====================
+**/.env
+**/.env.*
+
+# =====================
+# IDE / editors
+# =====================
+**/.vscode/
+**/.idea/
+**/*.swp
+**/*.swo
+**/*.sublime-project
+**/*.sublime-workspace
+
+# =====================
+# OS files (global)
+# =====================
+**/.DS_Store
+**/Thumbs.db
+
+# =====================
+# Jupyter
+# =====================
+**/.ipynb_checkpoints/
