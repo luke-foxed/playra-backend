@@ -29,6 +29,7 @@ dependencies = [
     "SQLAlchemy",
     "transaction",
     "zope.sqlalchemy",
+    "supabase",
 ]
 
 [project.optional-dependencies]
@@ -58,3 +59,15 @@ testpaths = [
     "playra",
     "tests",
 ]
+
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+strict = false
