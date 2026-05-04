@@ -1,6 +1,8 @@
 from pyramid.config import Configurator
 
-from .services.supabase.client import get_supabase_client
+from playra.auth.authentication import SupabaseAuthenticationPolicy
+from playra.auth.authorization import SupabaseAuthorizationPolicy
+from playra.clients.supabase import get_supabase_client
 
 
 def main(global_config, **settings):
@@ -11,6 +13,9 @@ def main(global_config, **settings):
         config.include('.routes')
         config.include('.models')
         config.scan()
+
+        config.set_authentication_policy(SupabaseAuthenticationPolicy())
+        config.set_authorization_policy(SupabaseAuthorizationPolicy())
 
         supabase_client = get_supabase_client()
         config.registry.supabase_client = supabase_client
