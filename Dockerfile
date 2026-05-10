@@ -19,4 +19,4 @@ RUN pip install ruff mypy
 
 EXPOSE 6543
 
-CMD ["pserve", "development.ini", "--reload"]
+CMD ["sh", "-c", "pip install -e . -q && exec pserve development.ini --reload"]

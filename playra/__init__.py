@@ -2,6 +2,7 @@ from pyramid.config import Configurator
 
 from playra.auth.authentication import SupabaseAuthenticationPolicy
 from playra.auth.authorization import SupabaseAuthorizationPolicy
+from playra.clients.rawg import get_rawg_client
 from playra.clients.supabase import get_supabase_client
 
 
@@ -19,5 +20,8 @@ def main(global_config, **settings):
 
         supabase_client = get_supabase_client()
         config.registry.supabase_client = supabase_client
+
+        rawg_client = get_rawg_client()
+        config.registry.rawg_client = rawg_client
 
     return config.make_wsgi_app()

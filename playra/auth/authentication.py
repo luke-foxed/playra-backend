@@ -20,9 +20,15 @@ class SupabaseAuthenticationPolicy(CallbackAuthenticationPolicy):
             return None
 
         token = auth.split(" ", 1)[1]
-        response = self.supabase_client.auth.get_user(token)
 
-        if response.user.id is None:
+        try:
+            response = self.supabase_client.auth.get_user(token)
+        except Exception as e:
+            log.warning("Token validation failed: %s", e)
+            request.auth_token_invalid = True
+            return None
+
+        if not response.user or response.user.id is None:
             return None
 
         return response.user.id
