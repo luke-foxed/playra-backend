@@ -5,7 +5,7 @@ from supabase import Client, create_client
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
-_client: Client | None = None
+_client = None
 
 def get_supabase_client() -> Client:
     global _client
