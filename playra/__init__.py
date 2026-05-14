@@ -13,6 +13,7 @@ def main(global_config, **settings):
     with Configurator(settings=settings) as config:
         config.include('pyramid_jinja2')
         config.include('.routes')
+        config.add_tween('playra.cors.cors_tween_factory')
         config.include('.models')
         config.scan()
 

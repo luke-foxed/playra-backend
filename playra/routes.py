@@ -3,5 +3,5 @@ def includeme(config):
     config.add_route('home', '/')
 
     # Games
-    config.add_route("games", "/games")
-    config.add_route("game", "/games/{id}")
+    config.add_route("games", "/api/v1/games")
+    config.add_route("game", "/api/v1/games/{id}")
