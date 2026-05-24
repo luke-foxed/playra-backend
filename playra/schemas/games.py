@@ -1,9 +1,50 @@
-from dataclasses import asdict, dataclass
-from typing import Literal
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict
 
 
-@dataclass
-class GameQuery:
+class GameSummaryResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: int
+    slug: str
+    name: str
+    released: str | None
+    tba: bool
+    background_image: str | None
+    rating: float
+    rating_top: int
+    ratings: list[dict[str, Any]]
+    ratings_count: int
+    reviews_text_count: int
+    added: int
+    added_by_status: dict[str, Any] | None
+    metacritic: int | None
+    playtime: int
+    suggestions_count: int
+    updated: str
+    esrb_rating: dict[str, Any] | None
+    platforms: list[dict[str, Any]]
+
+
+class GameResponse(GameSummaryResponse):
+    description: str | None = None
+    website: str | None = None
+    genres: list[dict[str, Any]] = []
+    developers: list[dict[str, Any]] = []
+    publishers: list[dict[str, Any]] = []
+
+
+class GamesResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    count: int
+    next: str | None
+    previous: str | None
+    results: list[GameSummaryResponse]
+
+
+class GameQuery(BaseModel):
     # pagination
     page: int = 1
     page_size: int = 20
@@ -39,9 +80,10 @@ class GameQuery:
     exclude_game_series: bool = False
     exclude_stores: str | None = None
 
-    ordering: Literal["name", "released", "added", "created", "updated", "rating", "metacritic", "-name", "-released", "-added", "-created", "-updated", "-rating", "-metacritic"] | None = None
+    ordering: Literal[
+        "name", "released", "added", "created", "updated", "rating", "metacritic",
+        "-name", "-released", "-added", "-created", "-updated", "-rating", "-metacritic",
+    ] | None = None
 
     def to_params(self) -> dict:
-        data = asdict(self)
-
-        return {k: v for k, v in data.items() if v is not None and v is not False}
+        return {k: v for k, v in self.model_dump().items() if v is not None and v is not False}

@@ -50,7 +50,6 @@ def cached(table, key_fn, ttl_seconds):
                 return cached_result
 
             result = func(self, *args, **kwargs)
-
             self._cache.set_cache(table, cache_key, result, ttl_seconds)
             return result
         return wrapper

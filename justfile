@@ -4,7 +4,7 @@ build:
 
 # Run dev container (hot reload enabled)
 dev:
-    docker run --rm \
+    docker run --rm -it \
         -p 6543:6543 \
         --env-file .env \
         -v $(pwd):/app \
@@ -13,7 +13,7 @@ dev:
 # Same as dev but rebuild first
 dev-rebuild:
     docker build -t playra-backend .
-    docker run --rm \
+    docker run --rm -it \
         -p 6543:6543 \
         --env-file .env \
         -v $(pwd):/app \

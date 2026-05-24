@@ -30,6 +30,7 @@ dependencies = [
     "transaction",
     "zope.sqlalchemy",
     "supabase",
+    "pydantic[email]",
 ]
 
 [project.optional-dependencies]
