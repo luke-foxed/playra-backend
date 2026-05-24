@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from pyramid.response import Response
 from pyramid.view import view_config
 
+from playra.auth.decorators import require_role
 from playra.clients.rawg import RawgClient
 from playra.schemas.games import GameQuery
 
@@ -15,6 +16,7 @@ _GAME_ID_RE = re.compile(r"^[a-z0-9-]+$")
 
 
 @view_config(route_name="game", renderer="json", permission="authenticated", request_method="GET")
+@require_role("active", "admin")
 def get_game(request):
     try:
         rawg_client: RawgClient = request.registry.rawg_client
@@ -33,6 +35,7 @@ def get_game(request):
 
 
 @view_config(route_name="games", renderer="json", permission="authenticated", request_method="GET")
+@require_role("active", "admin")
 def get_games(request):
     try:
         rawg_client: RawgClient = request.registry.rawg_client

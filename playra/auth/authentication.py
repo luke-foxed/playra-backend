@@ -31,4 +31,5 @@ class SupabaseAuthenticationPolicy(CallbackAuthenticationPolicy):
         if not response.user or response.user.id is None:
             return None
 
+        request.user_role = (response.user.app_metadata or {}).get('role')
         return response.user.id

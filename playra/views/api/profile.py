@@ -5,6 +5,7 @@ from pydantic import ValidationError
 from pyramid.response import Response
 from pyramid.view import view_config
 
+from playra.auth.decorators import require_role
 from playra.schemas.profile import ProfileData, ProfileRequest
 
 log = logging.getLogger(__name__)
@@ -29,6 +30,7 @@ def get_profile(request):
 
 
 @view_config(route_name="profile", renderer="json", permission="authenticated", request_method="PATCH")
+@require_role("active", "admin")
 def update_profile(request):
     current_user_id = request.authenticated_userid
     supabase_client = request.registry.supabase_client
@@ -50,6 +52,7 @@ def update_profile(request):
 
 
 @view_config(route_name="profile", renderer="json", permission="authenticated", request_method="DELETE")
+@require_role("active", "admin")
 def delete_profile(request):
     current_user_id = request.authenticated_userid
     if request.matchdict.get("user_id") != current_user_id:
