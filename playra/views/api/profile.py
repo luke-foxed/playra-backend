@@ -17,7 +17,7 @@ def get_profile(request):
 
     if request.matchdict.get("user_id") != current_user_id:
         log.warning("Unauthorized access attempt to profile %s by user %s", request.matchdict.get("user_id"), current_user_id)
-        return Response(json.dumps({"error": "Unauthorized"}), content_type="application/json", status=401)
+        return Response(json.dumps({"error": "Unauthorized"}), content_type="application/json", charset="utf-8", status=401)
 
     try:
         data = supabase_client.table("profiles").select("*").eq("id", current_user_id).single().execute().data
@@ -25,7 +25,7 @@ def get_profile(request):
         return {"data": user.model_dump()}
     except Exception:
         log.exception("Error fetching profile for user %s", current_user_id)
-        return Response(json.dumps({"error": "An error occurred."}), content_type="application/json", status=500)
+        return Response(json.dumps({"error": "An error occurred."}), content_type="application/json", charset="utf-8", status=500)
 
 
 @view_config(route_name="profile", renderer="json", permission="authenticated", request_method="PATCH")
@@ -35,7 +35,7 @@ def update_profile(request):
 
     if request.matchdict.get("user_id") != current_user_id:
         log.warning("Unauthorized access attempt to profile %s by user %s", request.matchdict.get("user_id"), current_user_id)
-        return Response(json.dumps({"error": "Unauthorized"}), content_type="application/json", status=401)
+        return Response(json.dumps({"error": "Unauthorized"}), content_type="application/json", charset="utf-8", status=401)
 
     try:
         profile = ProfileRequest(**request.json_body)
@@ -46,7 +46,7 @@ def update_profile(request):
         return Response(e.json(), content_type="application/json", charset="utf-8", status=400)
     except Exception:
         log.exception("Error updating profile for user %s", current_user_id)
-        return Response(json.dumps({"error": "An error occurred."}), content_type="application/json", status=500)
+        return Response(json.dumps({"error": "An error occurred."}), content_type="application/json", charset="utf-8", status=500)
 
 
 @view_config(route_name="profile", renderer="json", permission="authenticated", request_method="DELETE")
@@ -54,5 +54,5 @@ def delete_profile(request):
     current_user_id = request.authenticated_userid
     if request.matchdict.get("user_id") != current_user_id:
         log.warning("Unauthorized access attempt to delete profile %s by user %s", request.matchdict.get("user_id"), current_user_id)
-        return Response(json.dumps({"error": "Unauthorized"}), content_type="application/json", status=401)
-    return Response(json.dumps({"error": "Not implemented"}), content_type="application/json", status=501)
+        return Response(json.dumps({"error": "Unauthorized"}), content_type="application/json", charset="utf-8", status=401)
+    return Response(json.dumps({"error": "Not implemented"}), content_type="application/json", charset="utf-8", status=501)

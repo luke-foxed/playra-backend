@@ -1,6 +1,9 @@
+import os
+
+
 def cors_tween_factory(handler, registry):
     settings = registry.settings
-    raw = settings.get('cors.origins', '')
+    raw = settings.get('cors.origins') or os.environ.get('CORS_ORIGINS', '')
     allowed = {o.strip() for o in raw.split(',') if o.strip()}
 
     def cors_tween(request):

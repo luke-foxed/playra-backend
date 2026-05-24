@@ -8,7 +8,7 @@ dev:
         -p 6543:6543 \
         --env-file .env \
         -v $(pwd):/app \
-        playra-backend
+        playra-backend sh -c "pip install -e . -q && exec pserve development.ini --reload"
 
 # Same as dev but rebuild first
 dev-rebuild:
@@ -17,7 +17,7 @@ dev-rebuild:
         -p 6543:6543 \
         --env-file .env \
         -v $(pwd):/app \
-        playra-backend
+        playra-backend sh -c "pip install -e . -q && exec pserve development.ini --reload"
 
 # Clean run (no volume, like production test)
 run:
