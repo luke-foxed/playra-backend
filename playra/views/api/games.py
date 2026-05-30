@@ -27,11 +27,50 @@ def get_game(request):
 
         game = rawg_client.get_game(game_id)
 
-        return {"data": game.model_dump()}
+        return {"data": game.model_dump(mode="json")}
 
     except Exception:
         log.exception("Error fetching game %s", game_id)
         return Response(json.dumps({"error": "An error occurred while fetching data."}), content_type="application/json", charset="utf-8", status=500)
+
+
+@view_config(route_name="game_user", renderer="json", permission="authenticated", request_method="GET")
+@require_role("active", "admin")
+def get_game_user_context(request):
+    current_user_id = request.authenticated_userid
+
+    try:
+        game_id = int(request.matchdict["id"])
+    except ValueError:
+        return Response(json.dumps({"error": "Invalid game ID"}), content_type="application/json", charset="utf-8", status=400)
+
+    try:
+        supabase_client = request.registry.supabase_client
+
+        entries = (
+            supabase_client.table("list_games")
+            .select("user_rating, lists!inner(id, name, type)")
+            .eq("game_id", game_id)
+            .eq("lists.created_by", current_user_id)
+            .execute().data
+        )
+
+        in_wishlist = any(e["lists"]["type"] == "wishlist" for e in entries)
+        playlist_entry = next((e for e in entries if e["lists"]["type"] == "playlist"), None)
+        rating = playlist_entry["user_rating"] if playlist_entry else None
+        custom_lists = [{"id": e["lists"]["id"], "name": e["lists"]["name"]} for e in entries if e["lists"]["type"] == "custom"]
+
+        return {
+            "data": {
+                "in_wishlist": in_wishlist,
+                "rating": rating,
+                "lists": custom_lists,
+            }
+        }
+
+    except Exception:
+        log.exception("Error fetching user context for game %s", game_id)
+        return Response(json.dumps({"error": "An error occurred while fetching user context."}), content_type="application/json", charset="utf-8", status=500)
 
 
 @view_config(route_name="games", renderer="json", permission="authenticated", request_method="GET")
@@ -43,7 +82,7 @@ def get_games(request):
 
         games = rawg_client.get_games(query)
 
-        return {"data": games.model_dump()}
+        return {"data": games.model_dump(mode="json")}
 
     except ValidationError as e:
         return Response(e.json(), content_type="application/json", charset="utf-8", status=400)
