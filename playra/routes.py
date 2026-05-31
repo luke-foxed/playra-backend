@@ -7,6 +7,8 @@ def includeme(config):
 
     # Games
     config.add_route("games", "/api/v1/games")
+    config.add_route("games_popular", "/api/v1/games/popular")
+    config.add_route("games_recent", "/api/v1/games/recent")
     config.add_route("game", "/api/v1/games/{id}")
     config.add_route("game_user", "/api/v1/games/{id}/user")
 

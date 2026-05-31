@@ -89,3 +89,39 @@ def get_games(request):
     except Exception:
         log.exception("Error fetching games")
         return Response(json.dumps({"error": "An error occurred while fetching data."}), content_type="application/json", charset="utf-8", status=500)
+
+
+@view_config(route_name="games_popular", renderer="json", permission="authenticated", request_method="GET")
+@require_role("active", "admin")
+def get_popular_games(request):
+    try:
+        rawg_client: RawgClient = request.registry.rawg_client
+        query = GameQuery(**request.params)
+
+        games = rawg_client.get_popular_games(query)
+
+        return {"data": games.model_dump(mode="json")}
+
+    except ValidationError as e:
+        return Response(e.json(), content_type="application/json", charset="utf-8", status=400)
+    except Exception:
+        log.exception("Error fetching popular games")
+        return Response(json.dumps({"error": "An error occurred while fetching data."}), content_type="application/json", charset="utf-8", status=500)
+
+
+@view_config(route_name="games_recent", renderer="json", permission="authenticated", request_method="GET")
+@require_role("active", "admin")
+def get_recent_games(request):
+    try:
+        rawg_client: RawgClient = request.registry.rawg_client
+        query = GameQuery(**request.params)
+
+        games = rawg_client.get_recent_games(query)
+
+        return {"data": games.model_dump(mode="json")}
+
+    except ValidationError as e:
+        return Response(e.json(), content_type="application/json", charset="utf-8", status=400)
+    except Exception:
+        log.exception("Error fetching recent games")
+        return Response(json.dumps({"error": "An error occurred while fetching data."}), content_type="application/json", charset="utf-8", status=500)

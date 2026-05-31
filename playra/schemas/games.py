@@ -14,7 +14,7 @@ class GameSummaryResponse(BaseModel):
     background_image: str | None
     rating: float
     rating_top: int
-    ratings: list[dict[str, Any]]
+    ratings: list[dict[str, Any]] = []
     ratings_count: int
     reviews_text_count: int
     added: int
@@ -24,7 +24,7 @@ class GameSummaryResponse(BaseModel):
     suggestions_count: int
     updated: str
     esrb_rating: dict[str, Any] | None
-    platforms: list[dict[str, Any]]
+    platforms: list[dict[str, Any]] | None = None
 
 
 class GameResponse(GameSummaryResponse):
