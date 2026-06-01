@@ -139,6 +139,18 @@ def get_game_series(request):
         return Response(json.dumps({"error": "An error occurred while fetching data."}), content_type="application/json", charset="utf-8", status=500)
 
 
+@view_config(route_name="genres", renderer="json", permission="authenticated", request_method="GET")
+@require_role("active", "admin")
+def get_genres(request):
+    try:
+        rawg_client: RawgClient = request.registry.rawg_client
+        genres = rawg_client.get_genres()
+        return {"data": genres.model_dump(mode="json"), "from_cache": genres.from_cache}
+    except Exception:
+        log.exception("Error fetching genres")
+        return Response(json.dumps({"error": "An error occurred while fetching data."}), content_type="application/json", charset="utf-8", status=500)
+
+
 @view_config(route_name="games", renderer="json", permission="authenticated", request_method="GET")
 @require_role("active", "admin")
 def get_games(request):

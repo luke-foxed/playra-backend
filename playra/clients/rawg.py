@@ -4,7 +4,7 @@ import re
 import requests
 
 from playra.clients.cache import cached
-from playra.schemas.games import GameQuery, GameResponse, GameScreenshotsResponse, GameSeriesResponse, GamesResponse
+from playra.schemas.games import GameQuery, GameResponse, GameScreenshotsResponse, GameSeriesResponse, GamesResponse, GenresResponse
 
 BASE_URL = "https://api.rawg.io/api"
 
@@ -100,6 +100,13 @@ class RawgClient:
 
     def get_game_series(self, slug_or_id: str) -> GameSeriesResponse:
         return GameSeriesResponse(**self._fetch_game_series(slug_or_id))
+
+    @cached(table="game_queries", key_fn=lambda: {"_list": "genres"}, ttl_seconds=_GAME_EXTRAS_TTL)
+    def _fetch_genres(self) -> dict:
+        return self._get("/genres")
+
+    def get_genres(self) -> GenresResponse:
+        return GenresResponse(**self._fetch_genres())
 
 
 def get_rawg_client(cache_client) -> RawgClient:

@@ -10,6 +10,7 @@ def includeme(config):
     config.add_route("admin_user_role", "/api/v1/admin/users/{user_id}/role")
 
     # Games
+    config.add_route("genres", "/api/v1/genres")
     config.add_route("games", "/api/v1/games")
     config.add_route("games_popular", "/api/v1/games/popular")
     config.add_route("games_recent", "/api/v1/games/recent")

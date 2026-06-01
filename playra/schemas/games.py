@@ -67,6 +67,24 @@ class GameSeriesResponse(GamesResponse):
     pass
 
 
+class GenreResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: int
+    name: str
+    slug: str
+    games_count: int
+    image_background: str | None = None
+
+
+class GenresResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    count: int
+    results: list[GenreResponse]
+    from_cache: bool = Field(default=False, exclude=True)
+
+
 class GameQuery(BaseModel):
     # pagination
     page: int = 1
