@@ -41,7 +41,7 @@ def update_profile(request):
 
     try:
         profile = ProfileRequest(**request.json_body)
-        updates = profile.model_dump(exclude_none=True)
+        updates = profile.model_dump(mode="json", exclude_none=True)
         supabase_client.table("profiles").update(updates).eq("id", current_user_id).execute()
         return {"message": "Profile updated successfully"}
     except ValidationError as e:

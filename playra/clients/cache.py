@@ -47,10 +47,10 @@ def cached(table, key_fn, ttl_seconds):
             cached_result = self._cache.get_cache(table, cache_key)
             if cached_result:
                 log.info(f"cache hit for #{key_input}")
-                return cached_result
+                return {**cached_result, "from_cache": True}
 
             result = func(self, *args, **kwargs)
             self._cache.set_cache(table, cache_key, result, ttl_seconds)
-            return result
+            return {**result, "from_cache": False}
         return wrapper
     return decorator

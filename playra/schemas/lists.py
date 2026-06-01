@@ -33,7 +33,7 @@ class ListSummaryResponse(BaseModel):
     description: str | None = None
     created_by: str
     is_public: bool
-    type: Literal["wishlist", "playlist", "custom"]
+    type: Literal["wishlist", "ratings", "custom"]
     is_locked: bool
     created_at: datetime
     updated_at: datetime

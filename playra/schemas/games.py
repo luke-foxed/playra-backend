@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class GameSummaryResponse(BaseModel):
@@ -25,6 +25,8 @@ class GameSummaryResponse(BaseModel):
     updated: str
     esrb_rating: dict[str, Any] | None
     platforms: list[dict[str, Any]] | None = None
+    community_rating: float | None = Field(default=None, exclude=True)
+    playra_community_score: float | None = None
 
 
 class GameResponse(GameSummaryResponse):
@@ -33,6 +35,7 @@ class GameResponse(GameSummaryResponse):
     genres: list[dict[str, Any]] = []
     developers: list[dict[str, Any]] = []
     publishers: list[dict[str, Any]] = []
+    from_cache: bool = Field(default=False, exclude=True)
 
 
 class GamesResponse(BaseModel):
@@ -42,6 +45,7 @@ class GamesResponse(BaseModel):
     next: str | None
     previous: str | None
     results: list[GameSummaryResponse]
+    from_cache: bool = Field(default=False, exclude=True)
 
 
 class GameQuery(BaseModel):

@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+from collections import defaultdict
 
 from pydantic import ValidationError
 from pyramid.response import Response
@@ -8,9 +9,43 @@ from pyramid.view import view_config
 
 from playra.auth.decorators import require_role
 from playra.clients.rawg import RawgClient
-from playra.schemas.games import GameQuery
+from playra.schemas.games import GameQuery, GamesResponse
 
 log = logging.getLogger(__name__)
+
+
+def _get_community_score(game_id: int, supabase_client) -> float | None:
+    rows = (
+        supabase_client.table("list_games")
+        .select("user_rating")
+        .eq("game_id", game_id)
+        .not_.is_("user_rating", "null")
+        .execute().data
+    )
+    scores = [r["user_rating"] for r in rows]
+    return round(sum(scores) / len(scores), 2) if scores else None
+
+
+def _attach_community_ratings(games_response: GamesResponse, supabase_client) -> None:
+    game_ids = [g.id for g in games_response.results]
+    if not game_ids:
+        return
+
+    rows = (
+        supabase_client.table("list_games")
+        .select("game_id, user_rating")
+        .in_("game_id", game_ids)
+        .not_.is_("user_rating", "null")
+        .execute().data
+    )
+
+    totals = defaultdict(list)
+    for row in rows:
+        totals[row["game_id"]].append(row["user_rating"])
+
+    for game in games_response.results:
+        scores = totals.get(game.id)
+        game.playra_community_score = round(sum(scores) / len(scores), 2) if scores else None
 
 _GAME_ID_RE = re.compile(r"^[a-z0-9-]+$")
 
@@ -26,8 +61,9 @@ def get_game(request):
             return Response(json.dumps({"error": "Invalid game ID"}), content_type="application/json", charset="utf-8", status=400)
 
         game = rawg_client.get_game(game_id)
+        game.playra_community_score = _get_community_score(game.id, request.registry.supabase_client)
 
-        return {"data": game.model_dump(mode="json")}
+        return {"data": game.model_dump(mode="json"), "from_cache": game.from_cache}
 
     except Exception:
         log.exception("Error fetching game %s", game_id)
@@ -56,8 +92,8 @@ def get_game_user_context(request):
         )
 
         in_wishlist = any(e["lists"]["type"] == "wishlist" for e in entries)
-        playlist_entry = next((e for e in entries if e["lists"]["type"] == "playlist"), None)
-        rating = playlist_entry["user_rating"] if playlist_entry else None
+        ratings_entry = next((e for e in entries if e["lists"]["type"] == "ratings"), None)
+        rating = ratings_entry["user_rating"] if ratings_entry else None
         custom_lists = [{"id": e["lists"]["id"], "name": e["lists"]["name"]} for e in entries if e["lists"]["type"] == "custom"]
 
         return {
@@ -81,8 +117,9 @@ def get_games(request):
         query = GameQuery(**request.params)
 
         games = rawg_client.get_games(query)
+        _attach_community_ratings(games, request.registry.supabase_client)
 
-        return {"data": games.model_dump(mode="json")}
+        return {"data": games.model_dump(mode="json"), "from_cache": games.from_cache}
 
     except ValidationError as e:
         return Response(e.json(), content_type="application/json", charset="utf-8", status=400)
@@ -99,8 +136,9 @@ def get_popular_games(request):
         query = GameQuery(**request.params)
 
         games = rawg_client.get_popular_games(query)
+        _attach_community_ratings(games, request.registry.supabase_client)
 
-        return {"data": games.model_dump(mode="json")}
+        return {"data": games.model_dump(mode="json"), "from_cache": games.from_cache}
 
     except ValidationError as e:
         return Response(e.json(), content_type="application/json", charset="utf-8", status=400)
@@ -117,8 +155,9 @@ def get_recent_games(request):
         query = GameQuery(**request.params)
 
         games = rawg_client.get_recent_games(query)
+        _attach_community_ratings(games, request.registry.supabase_client)
 
-        return {"data": games.model_dump(mode="json")}
+        return {"data": games.model_dump(mode="json"), "from_cache": games.from_cache}
 
     except ValidationError as e:
         return Response(e.json(), content_type="application/json", charset="utf-8", status=400)
