@@ -6,6 +6,7 @@ from collections import defaultdict
 from pydantic import ValidationError
 from pyramid.response import Response
 from pyramid.view import view_config
+from requests.exceptions import HTTPError
 
 from playra.auth.decorators import require_role
 from playra.clients.rawg import RawgClient
@@ -65,6 +66,11 @@ def get_game(request):
 
         return {"data": game.model_dump(mode="json"), "from_cache": game.from_cache}
 
+    except HTTPError as e:
+        if e.response is not None and e.response.status_code == 404:
+            return Response(json.dumps({"error": "Game not found"}), content_type="application/json", charset="utf-8", status=404)
+        log.exception("RAWG error fetching game %s", game_id)
+        return Response(json.dumps({"error": "An error occurred while fetching data."}), content_type="application/json", charset="utf-8", status=500)
     except Exception:
         log.exception("Error fetching game %s", game_id)
         return Response(json.dumps({"error": "An error occurred while fetching data."}), content_type="application/json", charset="utf-8", status=500)
