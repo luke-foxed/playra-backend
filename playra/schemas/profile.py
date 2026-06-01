@@ -23,3 +23,7 @@ class ProfileRequest(BaseModel):
         if v is not None and v.strip() == "":
             raise ValueError("username cannot be empty")
         return v
+
+
+class RoleUpdateRequest(BaseModel):
+    role: Literal["suspended", "pending", "active", "admin"]

@@ -4,7 +4,7 @@ import re
 import requests
 
 from playra.clients.cache import cached
-from playra.schemas.games import GameQuery, GameResponse, GamesResponse
+from playra.schemas.games import GameQuery, GameResponse, GameScreenshotsResponse, GameSeriesResponse, GamesResponse
 
 BASE_URL = "https://api.rawg.io/api"
 
@@ -26,6 +26,7 @@ def _dedup_rich(games):
     return list(best.values())
 _GAMES_TTL = 60 * 60 * 24        # 24 hours
 _GAME_TTL = 60 * 60 * 24 * 7     # 7 days
+_GAME_EXTRAS_TTL = 60 * 60 * 24 * 28  # 28 days
 
 _client = None
 
@@ -85,6 +86,20 @@ class RawgClient:
 
     def get_game(self, slug_or_id: str) -> GameResponse:
         return GameResponse(**self._fetch_game(slug_or_id))
+
+    @cached(table="games", key_fn=lambda slug_or_id: f"{slug_or_id}:screenshots", ttl_seconds=_GAME_EXTRAS_TTL)
+    def _fetch_game_screenshots(self, slug_or_id: str) -> dict:
+        return self._get(f"/games/{slug_or_id}/screenshots")
+
+    def get_game_screenshots(self, slug_or_id: str) -> GameScreenshotsResponse:
+        return GameScreenshotsResponse(**self._fetch_game_screenshots(slug_or_id))
+
+    @cached(table="games", key_fn=lambda slug_or_id: f"{slug_or_id}:series", ttl_seconds=_GAME_EXTRAS_TTL)
+    def _fetch_game_series(self, slug_or_id: str) -> dict:
+        return self._get(f"/games/{slug_or_id}/game-series")
+
+    def get_game_series(self, slug_or_id: str) -> GameSeriesResponse:
+        return GameSeriesResponse(**self._fetch_game_series(slug_or_id))
 
 
 def get_rawg_client(cache_client) -> RawgClient:

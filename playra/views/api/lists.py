@@ -33,7 +33,7 @@ def get_lists(request):
     try:
         supabase_client = request.registry.supabase_client
 
-        query = supabase_client.table("lists").select("*").eq("created_by", target_user_id)
+        query = supabase_client.table("lists").select("*, list_games(count)").eq("created_by", target_user_id)
 
         if not is_own:
             query = query.eq("is_public", True)
@@ -46,6 +46,9 @@ def get_lists(request):
         query = query.range(offset, offset + params.page_size - 1)
 
         data = query.execute().data
+        for item in data:
+            counts = item.pop("list_games", [])
+            item["game_count"] = counts[0]["count"] if counts else 0
 
         return {"data": data, "page": params.page, "page_size": params.page_size}
 
@@ -77,6 +80,40 @@ def create_list(request):
         return Response(json.dumps({"error": "An error occurred while creating the list."}), content_type="application/json", charset="utf-8", status=500)
 
 
+@view_config(route_name="lists_public", renderer="json", permission="authenticated", request_method="GET")
+@require_role("active", "admin")
+def get_public_lists(request):
+    try:
+        params = ListQuery(
+            page=request.params.get("page", 1),
+            page_size=request.params.get("page_size", 50),
+            ordering=request.params.get("ordering"),
+        )
+    except ValidationError as e:
+        return Response(e.json(), content_type="application/json", charset="utf-8", status=400)
+
+    offset = (params.page - 1) * params.page_size
+
+    try:
+        supabase_client = request.registry.supabase_client
+        data = (
+            supabase_client.table("lists")
+            .select("*, profiles(id, username, avatar_url), list_games(count)")
+            .eq("is_public", True)
+            .eq("type", "custom")
+            .order("created_at", desc=True)
+            .range(offset, offset + params.page_size - 1)
+            .execute().data
+        )
+        for item in data:
+            counts = item.pop("list_games", [])
+            item["game_count"] = counts[0]["count"] if counts else 0
+        return {"data": data, "page": params.page, "page_size": params.page_size}
+    except Exception:
+        log.exception("Error fetching public lists")
+        return Response(json.dumps({"error": "An error occurred while fetching public lists."}), content_type="application/json", charset="utf-8", status=500)
+
+
 @view_config(route_name="list", renderer="json", permission="authenticated", request_method="GET")
 @require_role("active", "admin")
 def get_list(request):
@@ -85,7 +122,7 @@ def get_list(request):
     try:
         supabase_client = request.registry.supabase_client
 
-        user_list = supabase_client.table("lists").select("*").eq("id", user_list_id).single().execute().data
+        user_list = supabase_client.table("lists").select("*, profiles(id, username, avatar_url)").eq("id", user_list_id).single().execute().data
         user_list_games = supabase_client.table("list_games").select("*").eq("list_id", user_list_id).execute().data
 
         return {"data": {**user_list, "games": user_list_games}}
@@ -105,7 +142,7 @@ def update_list(request):
         supabase_client = request.registry.supabase_client
 
         list_model = ListRequest(**request.json_body)
-        list_updates = list_model.model_dump(exclude_none=True)
+        list_updates = list_model.model_dump(exclude_unset=True)
         supabase_client.table("lists").update(list_updates).eq("id", user_list_id).eq("created_by", current_user_id).execute()
 
         return {"message": "List updated successfully"}

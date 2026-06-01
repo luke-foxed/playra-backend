@@ -109,6 +109,36 @@ def get_game_user_context(request):
         return Response(json.dumps({"error": "An error occurred while fetching user context."}), content_type="application/json", charset="utf-8", status=500)
 
 
+@view_config(route_name="game_screenshots", renderer="json", permission="authenticated", request_method="GET")
+@require_role("active", "admin")
+def get_game_screenshots(request):
+    try:
+        rawg_client: RawgClient = request.registry.rawg_client
+        game_id: str = request.matchdict["id"]
+        if not _GAME_ID_RE.match(game_id):
+            return Response(json.dumps({"error": "Invalid game ID"}), content_type="application/json", charset="utf-8", status=400)
+        screenshots = rawg_client.get_game_screenshots(game_id)
+        return {"data": screenshots.model_dump(mode="json"), "from_cache": screenshots.from_cache}
+    except Exception:
+        log.exception("Error fetching screenshots for game %s", game_id)
+        return Response(json.dumps({"error": "An error occurred while fetching data."}), content_type="application/json", charset="utf-8", status=500)
+
+
+@view_config(route_name="game_series", renderer="json", permission="authenticated", request_method="GET")
+@require_role("active", "admin")
+def get_game_series(request):
+    try:
+        rawg_client: RawgClient = request.registry.rawg_client
+        game_id: str = request.matchdict["id"]
+        if not _GAME_ID_RE.match(game_id):
+            return Response(json.dumps({"error": "Invalid game ID"}), content_type="application/json", charset="utf-8", status=400)
+        series = rawg_client.get_game_series(game_id)
+        return {"data": series.model_dump(mode="json"), "from_cache": series.from_cache}
+    except Exception:
+        log.exception("Error fetching series for game %s", game_id)
+        return Response(json.dumps({"error": "An error occurred while fetching data."}), content_type="application/json", charset="utf-8", status=500)
+
+
 @view_config(route_name="games", renderer="json", permission="authenticated", request_method="GET")
 @require_role("active", "admin")
 def get_games(request):

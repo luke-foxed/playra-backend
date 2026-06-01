@@ -31,6 +31,7 @@ class ListSummaryResponse(BaseModel):
     id: str
     name: str
     description: str | None = None
+    cover_url: str | None = None
     created_by: str
     is_public: bool
     type: Literal["wishlist", "ratings", "custom"]
@@ -46,6 +47,7 @@ class ListDetailResponse(ListSummaryResponse):
 class ListRequest(BaseModel):
     name: str
     description: str | None = None
+    cover_url: str | None = None
     is_public: bool = False
 
     @field_validator("name")

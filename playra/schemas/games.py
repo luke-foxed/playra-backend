@@ -48,6 +48,25 @@ class GamesResponse(BaseModel):
     from_cache: bool = Field(default=False, exclude=True)
 
 
+class GameScreenshot(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: int
+    image: str
+
+
+class GameScreenshotsResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    count: int
+    results: list[GameScreenshot]
+    from_cache: bool = Field(default=False, exclude=True)
+
+
+class GameSeriesResponse(GamesResponse):
+    pass
+
+
 class GameQuery(BaseModel):
     # pagination
     page: int = 1
