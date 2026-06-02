@@ -96,15 +96,17 @@ def get_public_lists(request):
 
     try:
         supabase_client = request.registry.supabase_client
-        data = (
+        query = (
             supabase_client.table("lists")
             .select("*, profiles(id, username, avatar_url), list_games(count)")
             .eq("is_public", True)
-            .eq("type", "custom")
             .order("created_at", desc=True)
             .range(offset, offset + params.page_size - 1)
-            .execute().data
         )
+        user_id = request.params.get("user_id")
+        if user_id:
+            query = query.eq("created_by", user_id)
+        data = query.execute().data
         for item in data:
             counts = item.pop("list_games", [])
             item["game_count"] = counts[0]["count"] if counts else 0
