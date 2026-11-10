@@ -538,6 +538,43 @@ class IgdbClient:
         game.from_cache = cached_result.get("from_cache", False)
         return game
 
+    @cached(
+        table="games",
+        key_fn=lambda ids: f"igdb:batch:{','.join(str(i) for i in sorted(set(ids)))}",
+        ttl_seconds=_GAMES_TTL,
+    )
+    def _fetch_games_by_ids(self, ids: list[int]) -> dict:
+        unique_ids = sorted(set(ids))
+        ids_clause = ",".join(str(i) for i in unique_ids)
+        rows = self._post(
+            "games",
+            "fields id,name,cover.image_id,first_release_date,genres.id,genres.name,aggregated_rating;"
+            f" where id = ({ids_clause}); limit {len(unique_ids)};",
+        )
+        return {"rows": rows}
+
+    def get_games_by_ids(self, ids: list[int]) -> dict[int, dict]:
+        """Live lookup used to refresh denormalized list_games snapshots. Not a
+        GameResponse per row -- just the handful of fields that go stale (name,
+        cover, genres, critic rating) so a caller can overlay them onto stored rows."""
+        if not ids:
+            return {}
+        rows = self._fetch_games_by_ids(ids)["rows"]
+        return {
+            row["id"]: {
+                "name": row.get("name"),
+                "cover_url": _image_url((row.get("cover") or {}).get("image_id")),
+                "release_year": (
+                    datetime.fromtimestamp(row["first_release_date"], tz=UTC).year
+                    if row.get("first_release_date") is not None
+                    else None
+                ),
+                "genres": [{"id": g["id"], "name": g["name"]} for g in row.get("genres") or []],
+                "critic_rating": row.get("aggregated_rating"),
+            }
+            for row in rows
+        }
+
     @cached(table="games", key_fn=lambda igdb_id: f"igdb:{igdb_id}:screenshots", ttl_seconds=_GAME_EXTRAS_TTL)
     def _fetch_game_screenshots(self, igdb_id: int) -> dict:
         rows = self._post("screenshots", f"fields image_id; where game = {igdb_id}; limit 50;")

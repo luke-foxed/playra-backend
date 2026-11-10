@@ -127,6 +127,23 @@ def get_list(request):
         user_list = supabase_client.table("lists").select("*, profiles(id, username, avatar_url)").eq("id", user_list_id).single().execute().data
         user_list_games = supabase_client.table("list_games").select("*").eq("list_id", user_list_id).execute().data
 
+        # list_games stores a denormalized snapshot taken when the game was added
+        # (so we don't need a join on every list view), but that snapshot goes stale
+        # -- most visibly, critic_rating was never backfilled for games added before
+        # the IGDB migration. Overlay live IGDB data where we can reach it; fall back
+        # to the stored snapshot if a game can't be fetched (e.g. IGDB is down).
+        igdb_client = request.registry.igdb_client
+        game_ids = [g["game_id"] for g in user_list_games]
+        try:
+            live_by_id = igdb_client.get_games_by_ids(game_ids)
+        except Exception:
+            log.warning("Could not refresh live game data for list %s", user_list_id, exc_info=True)
+            live_by_id = {}
+        for g in user_list_games:
+            live = live_by_id.get(g["game_id"])
+            if live:
+                g.update(live)
+
         return {"data": {**user_list, "games": user_list_games}}
 
     except Exception:
