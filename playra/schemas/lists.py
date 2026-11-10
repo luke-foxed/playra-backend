@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, field_validator
@@ -9,10 +9,10 @@ BATCH_LIMIT = 50
 class ListGameInput(BaseModel):
     game_id: int
     name: str | None = None
-    released: date | None = None
+    release_year: int | None = None
     genres: list[dict[str, Any]] | None = None
-    metacritic: int | None = None
-    background_image: str | None = None
+    critic_rating: float | None = None
+    cover_url: str | None = None
     user_rating: float | None = None
 
 
@@ -20,10 +20,10 @@ class ListGameEntry(BaseModel):
     game_id: int
     added_at: datetime
     name: str | None = None
-    released: date | None = None
+    release_year: int | None = None
     genres: list[dict[str, Any]] | None = None
-    metacritic: int | None = None
-    background_image: str | None = None
+    critic_rating: float | None = None
+    cover_url: str | None = None
     user_rating: float | None = None
 
 

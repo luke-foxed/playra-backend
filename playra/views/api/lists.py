@@ -187,10 +187,10 @@ def add_games_to_list(request):
                 "list_id": user_list_id,
                 "game_id": g.game_id,
                 "name": g.name,
-                "released": str(g.released) if g.released else None,
+                "release_year": g.release_year,
                 "genres": g.genres,
-                "metacritic": g.metacritic,
-                "background_image": g.background_image,
+                "critic_rating": g.critic_rating,
+                "cover_url": g.cover_url,
                 "user_rating": g.user_rating,
             }
             for g in batch.games

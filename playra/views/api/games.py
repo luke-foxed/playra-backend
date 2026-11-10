@@ -6,26 +6,28 @@ from collections import defaultdict
 from pydantic import ValidationError
 from pyramid.response import Response
 from pyramid.view import view_config
-from requests.exceptions import HTTPError
 
 from playra.auth.decorators import require_role
-from playra.clients.rawg import RawgClient, RawgUnavailableError
+from playra.clients.igdb import IgdbClient, IgdbHTTPError, IgdbNotFoundError, IgdbUnavailableError
 from playra.schemas.games import GameQuery, GamesResponse
 
 log = logging.getLogger(__name__)
 
-# Statuses that mean "RAWG is having a bad time", not "the request was wrong".
-# 520-524 are Cloudflare's own origin-failure codes, which RAWG sits behind.
-_UPSTREAM_DOWN_STATUSES = frozenset({429, 500, 502, 503, 504, 520, 521, 522, 523, 524})
+# Statuses that mean "IGDB is having a bad time", not "the request was wrong".
+# No Cloudflare 520-524 range here — that was a RAWG-specific quirk.
+_UPSTREAM_DOWN_STATUSES = frozenset({429, 500, 502, 503, 504})
 
 
-def _rawg_error_response(context: str, exc: Exception) -> Response:
-    """503 when RAWG itself is down, 500 for anything we might have caused."""
+def _igdb_error_response(context: str, exc: Exception) -> Response:
+    """503 when IGDB (or the Twitch OAuth token endpoint) itself is down, 500 for
+    anything we might have caused. IgdbUnavailableError already covers both IGDB
+    call failures and token-fetch failures, so no special-casing is needed for
+    "the OAuth handshake failed" vs. "the actual games endpoint failed"."""
     status = getattr(getattr(exc, "response", None), "status_code", None)
-    if isinstance(exc, RawgUnavailableError) or status in _UPSTREAM_DOWN_STATUSES:
+    if isinstance(exc, IgdbUnavailableError) or status in _UPSTREAM_DOWN_STATUSES:
         # No stack trace: an upstream outage is not a bug in our code, and at one log
         # entry per request these tracebacks bury everything else.
-        log.warning("%s: RAWG unavailable (%s)", context, exc)
+        log.warning("%s: IGDB unavailable (%s)", context, exc)
         response = Response(
             json.dumps({"error": "Game data is temporarily unavailable. Please try again shortly."}),
             content_type="application/json",
@@ -35,7 +37,7 @@ def _rawg_error_response(context: str, exc: Exception) -> Response:
         response.headers["Retry-After"] = "30"
         return response
 
-    log.exception("%s: unexpected RAWG error", context)
+    log.exception("%s: unexpected IGDB error", context)
     return Response(json.dumps({"error": "An error occurred while fetching data."}), content_type="application/json", charset="utf-8", status=500)
 
 
@@ -72,28 +74,29 @@ def _attach_community_ratings(games_response: GamesResponse, supabase_client) ->
         scores = totals.get(game.id)
         game.playra_community_score = round(sum(scores) / len(scores), 2) if scores else None
 
-_GAME_ID_RE = re.compile(r"^[a-z0-9-]+$")
+# IGDB is numeric-id-only -- no slug lookup, unlike RAWG's slug-or-id paths.
+_GAME_ID_RE = re.compile(r"^\d+$")
 
 
 @view_config(route_name="game", renderer="json", permission="authenticated", request_method="GET")
 @require_role("active", "admin")
 def get_game(request):
     try:
-        rawg_client: RawgClient = request.registry.rawg_client
+        igdb_client: IgdbClient = request.registry.igdb_client
         game_id: str = request.matchdict["id"]
 
         if not _GAME_ID_RE.match(game_id):
             return Response(json.dumps({"error": "Invalid game ID"}), content_type="application/json", charset="utf-8", status=400)
 
-        game = rawg_client.get_game(game_id)
+        game = igdb_client.get_game(int(game_id))
         game.playra_community_score = _get_community_score(game.id, request.registry.supabase_client)
 
         return {"data": game.model_dump(mode="json"), "from_cache": game.from_cache}
 
-    except (RawgUnavailableError, HTTPError) as e:
-        if getattr(getattr(e, "response", None), "status_code", None) == 404:
-            return Response(json.dumps({"error": "Game not found"}), content_type="application/json", charset="utf-8", status=404)
-        return _rawg_error_response(f"Error fetching game {game_id}", e)
+    except IgdbNotFoundError:
+        return Response(json.dumps({"error": "Game not found"}), content_type="application/json", charset="utf-8", status=404)
+    except (IgdbUnavailableError, IgdbHTTPError) as e:
+        return _igdb_error_response(f"Error fetching game {game_id}", e)
     except Exception:
         log.exception("Error fetching game %s", game_id)
         return Response(json.dumps({"error": "An error occurred while fetching data."}), content_type="application/json", charset="utf-8", status=500)
@@ -142,33 +145,35 @@ def get_game_user_context(request):
 @require_role("active", "admin")
 def get_game_screenshots(request):
     try:
-        rawg_client: RawgClient = request.registry.rawg_client
+        igdb_client: IgdbClient = request.registry.igdb_client
         game_id: str = request.matchdict["id"]
         if not _GAME_ID_RE.match(game_id):
             return Response(json.dumps({"error": "Invalid game ID"}), content_type="application/json", charset="utf-8", status=400)
-        screenshots = rawg_client.get_game_screenshots(game_id)
+        screenshots = igdb_client.get_game_screenshots(int(game_id))
         return {"data": screenshots.model_dump(mode="json"), "from_cache": screenshots.from_cache}
-    except (RawgUnavailableError, HTTPError) as e:
-        return _rawg_error_response(f"Error fetching screenshots for game {game_id}", e)
+    except (IgdbUnavailableError, IgdbHTTPError) as e:
+        return _igdb_error_response(f"Error fetching screenshots for game {game_id}", e)
     except Exception:
         log.exception("Error fetching screenshots for game %s", game_id)
         return Response(json.dumps({"error": "An error occurred while fetching data."}), content_type="application/json", charset="utf-8", status=500)
 
 
-@view_config(route_name="game_series", renderer="json", permission="authenticated", request_method="GET")
+@view_config(route_name="game_related", renderer="json", permission="authenticated", request_method="GET")
 @require_role("active", "admin")
-def get_game_series(request):
+def get_game_related(request):
     try:
-        rawg_client: RawgClient = request.registry.rawg_client
+        igdb_client: IgdbClient = request.registry.igdb_client
         game_id: str = request.matchdict["id"]
         if not _GAME_ID_RE.match(game_id):
             return Response(json.dumps({"error": "Invalid game ID"}), content_type="application/json", charset="utf-8", status=400)
-        series = rawg_client.get_game_series(game_id)
-        return {"data": series.model_dump(mode="json"), "from_cache": series.from_cache}
-    except (RawgUnavailableError, HTTPError) as e:
-        return _rawg_error_response(f"Error fetching series for game {game_id}", e)
+        related = igdb_client.get_game_related(int(game_id))
+        return {"data": related.model_dump(mode="json"), "from_cache": related.from_cache}
+    except IgdbNotFoundError:
+        return Response(json.dumps({"error": "Game not found"}), content_type="application/json", charset="utf-8", status=404)
+    except (IgdbUnavailableError, IgdbHTTPError) as e:
+        return _igdb_error_response(f"Error fetching related games for {game_id}", e)
     except Exception:
-        log.exception("Error fetching series for game %s", game_id)
+        log.exception("Error fetching related games for %s", game_id)
         return Response(json.dumps({"error": "An error occurred while fetching data."}), content_type="application/json", charset="utf-8", status=500)
 
 
@@ -176,11 +181,11 @@ def get_game_series(request):
 @require_role("active", "admin")
 def get_genres(request):
     try:
-        rawg_client: RawgClient = request.registry.rawg_client
-        genres = rawg_client.get_genres()
+        igdb_client: IgdbClient = request.registry.igdb_client
+        genres = igdb_client.get_genres()
         return {"data": genres.model_dump(mode="json"), "from_cache": genres.from_cache}
-    except (RawgUnavailableError, HTTPError) as e:
-        return _rawg_error_response("Error fetching genres", e)
+    except (IgdbUnavailableError, IgdbHTTPError) as e:
+        return _igdb_error_response("Error fetching genres", e)
     except Exception:
         log.exception("Error fetching genres")
         return Response(json.dumps({"error": "An error occurred while fetching data."}), content_type="application/json", charset="utf-8", status=500)
@@ -190,18 +195,18 @@ def get_genres(request):
 @require_role("active", "admin")
 def get_games(request):
     try:
-        rawg_client: RawgClient = request.registry.rawg_client
+        igdb_client: IgdbClient = request.registry.igdb_client
         query = GameQuery(**request.params)
 
-        games = rawg_client.get_games(query)
+        games = igdb_client.get_games(query)
         _attach_community_ratings(games, request.registry.supabase_client)
 
         return {"data": games.model_dump(mode="json"), "from_cache": games.from_cache}
 
     except ValidationError as e:
         return Response(e.json(), content_type="application/json", charset="utf-8", status=400)
-    except (RawgUnavailableError, HTTPError) as e:
-        return _rawg_error_response("Error fetching games", e)
+    except (IgdbUnavailableError, IgdbHTTPError) as e:
+        return _igdb_error_response("Error fetching games", e)
     except Exception:
         log.exception("Error fetching games")
         return Response(json.dumps({"error": "An error occurred while fetching data."}), content_type="application/json", charset="utf-8", status=500)
@@ -211,18 +216,18 @@ def get_games(request):
 @require_role("active", "admin")
 def get_popular_games(request):
     try:
-        rawg_client: RawgClient = request.registry.rawg_client
+        igdb_client: IgdbClient = request.registry.igdb_client
         query = GameQuery(**request.params)
 
-        games = rawg_client.get_popular_games(query)
+        games = igdb_client.get_popular_games(query)
         _attach_community_ratings(games, request.registry.supabase_client)
 
         return {"data": games.model_dump(mode="json"), "from_cache": games.from_cache}
 
     except ValidationError as e:
         return Response(e.json(), content_type="application/json", charset="utf-8", status=400)
-    except (RawgUnavailableError, HTTPError) as e:
-        return _rawg_error_response("Error fetching popular games", e)
+    except (IgdbUnavailableError, IgdbHTTPError) as e:
+        return _igdb_error_response("Error fetching popular games", e)
     except Exception:
         log.exception("Error fetching popular games")
         return Response(json.dumps({"error": "An error occurred while fetching data."}), content_type="application/json", charset="utf-8", status=500)
@@ -232,18 +237,18 @@ def get_popular_games(request):
 @require_role("active", "admin")
 def get_recent_games(request):
     try:
-        rawg_client: RawgClient = request.registry.rawg_client
+        igdb_client: IgdbClient = request.registry.igdb_client
         query = GameQuery(**request.params)
 
-        games = rawg_client.get_recent_games(query)
+        games = igdb_client.get_recent_games(query)
         _attach_community_ratings(games, request.registry.supabase_client)
 
         return {"data": games.model_dump(mode="json"), "from_cache": games.from_cache}
 
     except ValidationError as e:
         return Response(e.json(), content_type="application/json", charset="utf-8", status=400)
-    except (RawgUnavailableError, HTTPError) as e:
-        return _rawg_error_response("Error fetching recent games", e)
+    except (IgdbUnavailableError, IgdbHTTPError) as e:
+        return _igdb_error_response("Error fetching recent games", e)
     except Exception:
         log.exception("Error fetching recent games")
         return Response(json.dumps({"error": "An error occurred while fetching data."}), content_type="application/json", charset="utf-8", status=500)

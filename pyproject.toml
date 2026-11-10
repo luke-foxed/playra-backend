@@ -44,6 +44,7 @@ testing = [
 
 [project.scripts]
 initialize_playra_db = "playra.scripts.initialize_db:main"
+migrate_rawg_ids = "playra.scripts.migrate_rawg_ids:main"
 
 [project.entry-points."paste.app_factory"]
 main = "playra:main"
