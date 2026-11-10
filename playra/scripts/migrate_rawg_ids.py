@@ -4,19 +4,26 @@ Usage:
     python -m playra.scripts.migrate_rawg_ids --dry-run
     python -m playra.scripts.migrate_rawg_ids --apply mapping_auto.csv mapping_review_done.csv
 
-`--dry-run` only SELECTs from Supabase and only makes read-only calls to RAWG and
-IGDB -- it never calls .update()/.insert()/.delete(). That makes it safe to run
-directly against production to generate the review report before anything is
-actually changed.
+`--dry-run` only SELECTs from Supabase and only makes read-only calls to IGDB --
+it never calls .update()/.insert()/.delete(). That makes it safe to run directly
+against production to generate the review report before anything is actually
+changed.
+
+Originally this looked up each RAWG id's name/release year by calling RAWG's API
+directly. That turned out to be unreliable (RAWG itself is the flaky service
+that started this whole migration) and unnecessary: `list_games` already stores
+the name/release_year it had at add-time as a denormalized snapshot, written by
+the frontend when the row was created. Reading that instead means this script
+makes zero RAWG calls and zero RAWG_API_KEY dependency.
 
 Flow:
-    1. `--dry-run` reads every distinct `game_id` in `list_games`, looks each one
-       up on RAWG, searches IGDB for name matches, and scores the candidates.
-       High-confidence matches go to mapping_auto.csv (ready to apply as-is).
-       Everything else -- no RAWG data, no IGDB candidates, or an ambiguous/low
-       score -- goes to mapping_review.csv with a blank `igdb_id` column and the
-       top candidates listed, for a human to fill in. Nothing ambiguous is ever
-       auto-applied.
+    1. `--dry-run` reads every distinct `game_id` (with its stored name and
+       release_year) in `list_games`, searches IGDB for name matches, and scores
+       the candidates. High-confidence matches go to mapping_auto.csv (ready to
+       apply as-is). Everything else -- no stored name, no IGDB candidates, or an
+       ambiguous/low score -- goes to mapping_review.csv with a blank `igdb_id`
+       column and the top candidates listed, for a human to fill in. Nothing
+       ambiguous is ever auto-applied.
     2. Fill in mapping_review.csv's `igdb_id` column by hand (e.g. save as
        mapping_review_done.csv).
     3. `--apply mapping_auto.csv mapping_review_done.csv` rewrites
@@ -29,13 +36,11 @@ import argparse
 import csv
 import json
 import logging
-import os
 import re
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-import requests
 from rapidfuzz import fuzz
 
 from playra.clients.cache import CacheClient
@@ -43,9 +48,6 @@ from playra.clients.igdb import get_igdb_client
 from playra.clients.supabase import get_supabase_client
 
 log = logging.getLogger(__name__)
-
-RAWG_API_KEY_ENV = "RAWG_API_KEY"
-RAWG_BASE_URL = "https://api.rawg.io/api"
 
 DEFAULT_STATE_FILE = Path(__file__).with_name("migrate_rawg_ids_state.json")
 DEFAULT_AUTO_CSV = Path("mapping_auto.csv")
@@ -61,44 +63,24 @@ AUTO_ACCEPT_MARGIN = 8
 CANDIDATE_COUNT = 5
 
 _PUNCT_RE = re.compile(r'[^\w\s]')
+# RAWG appends "(YYYY)" to a stored name only to disambiguate same-titled games
+# (e.g. "God of War (2018)" vs the 2005 original) -- it's not part of the real
+# title, and IGDB's search returns zero results for a query containing it.
+_TRAILING_YEAR_RE = re.compile(r'\s*\(\d{4}\)\s*$')
 
 
 def _normalize_name(s: str) -> str:
     return ' '.join(_PUNCT_RE.sub(' ', (s or "").lower()).split())
 
 
-def _year_from_iso_date(value: str | None) -> int | None:
-    if not value:
-        return None
-    try:
-        return int(value[:4])
-    except ValueError:
-        return None
+def _search_name(s: str) -> str:
+    return _TRAILING_YEAR_RE.sub('', s or "").strip()
 
 
 def _year_from_unix(ts: int | None) -> int | None:
     if ts is None:
         return None
     return datetime.fromtimestamp(ts, UTC).year
-
-
-def fetch_rawg_game(session: requests.Session, rawg_id: int, api_key: str) -> dict | None:
-    """Minimal, standalone RAWG lookup. This runs a few hundred one-off requests,
-    not a live request path, so it skips the retry/cache sophistication the old
-    rawg.py client had (that module is gone, replaced by the IGDB client)."""
-    try:
-        resp = session.get(f"{RAWG_BASE_URL}/games/{rawg_id}", params={"key": api_key}, timeout=(3.05, 10))
-    except requests.RequestException as e:
-        log.warning("RAWG lookup failed for id %s: %s", rawg_id, e)
-        return None
-    if resp.status_code == 404:
-        return None
-    try:
-        resp.raise_for_status()
-    except requests.HTTPError as e:
-        log.warning("RAWG lookup failed for id %s: %s", rawg_id, e)
-        return None
-    return resp.json()
 
 
 def score_candidate(rawg_name: str, rawg_year: int | None, candidate: dict) -> int:
@@ -119,9 +101,14 @@ def score_candidate(rawg_name: str, rawg_year: int | None, candidate: dict) -> i
     return max(0, min(100, round(name_score + bonus)))
 
 
-def _distinct_rawg_ids(supabase) -> list[int]:
-    rows = supabase.table("list_games").select("game_id").execute().data
-    return sorted({r["game_id"] for r in rows})
+def _distinct_rawg_games(supabase) -> list[tuple[int, str, int | None]]:
+    """One (game_id, name, release_year) per distinct game_id, taken from
+    list_games' own denormalized snapshot rather than re-fetching from RAWG."""
+    rows = supabase.table("list_games").select("game_id, name, release_year").execute().data
+    by_id: dict[int, tuple[str, int | None]] = {}
+    for r in rows:
+        by_id.setdefault(r["game_id"], (r.get("name") or "", r.get("release_year")))
+    return sorted((gid, name, year) for gid, (name, year) in by_id.items())
 
 
 def _load_state(state_file: Path) -> dict:
@@ -172,38 +159,29 @@ def _review_row(rawg_id: int, rawg_name: str, rawg_year: int | None, scored: lis
 def run_dry_run(
     auto_csv: Path, review_csv: Path, threshold_auto: int, threshold_margin: int, candidates: int, state_file: Path,
 ) -> None:
-    rawg_api_key = os.environ.get(RAWG_API_KEY_ENV)
-    if not rawg_api_key:
-        raise RuntimeError(f"{RAWG_API_KEY_ENV} environment variable is not set (needed temporarily for this script)")
-
     supabase = get_supabase_client()
     cache_client = CacheClient(supabase)
     igdb = get_igdb_client(cache_client)
-    rawg_session = requests.Session()
 
     state = _load_state(state_file)
     already_migrated = set(state.get("migrated", {}).keys())
 
-    rawg_ids = _distinct_rawg_ids(supabase)
-    log.info("Found %d distinct game_id value(s) in list_games", len(rawg_ids))
+    rawg_games = _distinct_rawg_games(supabase)
+    log.info("Found %d distinct game_id value(s) in list_games", len(rawg_games))
 
     auto_rows: list[dict] = []
     review_rows: list[dict] = []
 
-    for rawg_id in rawg_ids:
+    for rawg_id, rawg_name, rawg_year in rawg_games:
         if str(rawg_id) in already_migrated:
             continue
 
-        rawg_game = fetch_rawg_game(rawg_session, rawg_id, rawg_api_key)
-        if rawg_game is None:
-            review_rows.append(_review_row(rawg_id, "", None, [], candidates, "no RAWG data found (404 or request failed)"))
+        if not rawg_name:
+            review_rows.append(_review_row(rawg_id, "", None, [], candidates, "no name stored on list_games for this id"))
             continue
 
-        rawg_name = rawg_game.get("name", "")
-        rawg_year = _year_from_iso_date(rawg_game.get("released"))
-
         try:
-            raw_candidates = igdb.search_raw(rawg_name, limit=candidates)
+            raw_candidates = igdb.search_raw(_search_name(rawg_name), limit=candidates)
         except Exception as e:
             log.warning("IGDB search failed for RAWG id %s (%s): %s", rawg_id, rawg_name, e)
             raw_candidates = []
