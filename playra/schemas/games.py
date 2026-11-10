@@ -131,6 +131,7 @@ class GameQuery(BaseModel):
         "rating", "-rating",
         "total_rating", "-total_rating",
         "total_rating_count", "-total_rating_count",
+        "aggregated_rating", "-aggregated_rating",
     ] | None = None
 
     @field_validator(*_CSV_INT_FIELDS, mode="before")

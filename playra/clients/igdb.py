@@ -88,11 +88,19 @@ _MAX_FUTURE_RELEASE_YEARS = 5
 _MIN_RATING_COUNT_FOR_RATING_SORT = 100
 _RATING_ORDERINGS = frozenset({"rating", "-rating", "total_rating", "-total_rating"})
 
+# aggregated_rating (critic score, closest thing to "metacritic") is reviewed by
+# a handful of outlets per game, not thousands of players -- its count lives on
+# a completely different scale than total_rating_count, so it needs its own,
+# much lower threshold. 10 was picked empirically: below it the top of the
+# sort is dominated by one- or two-review titles sitting at a lucky 100.0.
+_MIN_AGGREGATED_RATING_COUNT = 10
+_AGGREGATED_RATING_ORDERINGS = frozenset({"aggregated_rating", "-aggregated_rating"})
+
 # Bumped whenever the query logic below changes in a way that would make an
 # already-cached response (same params, same cache key) wrong rather than just
 # stale -- e.g. adding a where-clause. TTL alone doesn't cover that case since the
 # cache key doesn't encode the query logic, only the user-facing params.
-_CACHE_VERSION = 4
+_CACHE_VERSION = 5
 
 _GAME_FIELDS = (
     "id,name,slug,summary,storyline,first_release_date,"
@@ -100,7 +108,7 @@ _GAME_FIELDS = (
     "genres.id,genres.name,"
     "platforms.id,platforms.name,platforms.abbreviation,"
     "involved_companies.company.name,involved_companies.developer,involved_companies.publisher,"
-    "rating,aggregated_rating,total_rating,total_rating_count,hypes,"
+    "rating,aggregated_rating,aggregated_rating_count,total_rating,total_rating_count,hypes,"
     "screenshots.image_id,"
     "artworks.image_id,"
     "similar_games,"
@@ -155,6 +163,33 @@ def _sort_clause(ordering: str) -> str:
     desc = ordering.startswith("-")
     field = ordering.lstrip("-")
     return f"{field} {'desc' if desc else 'asc'}"
+
+
+def _row_completeness(row: dict) -> tuple:
+    return (
+        row.get("aggregated_rating") is not None,
+        row.get("total_rating_count") or 0,
+        row.get("cover") is not None,
+    )
+
+
+def _dedup_by_name(rows: list[dict]) -> list[dict]:
+    """IGDB sometimes carries two rows for what's really the same game -- most
+    visibly two separate "Grand Theft Auto V" entries, a thin regional/SKU
+    variant missing a cover and critic score alongside the complete one. Keep
+    only the most complete row per exact (case-folded) name, preserving the
+    original ordering of each name's first occurrence."""
+    best: dict[str, dict] = {}
+    order: list[str] = []
+    for i, row in enumerate(rows):
+        name = (row.get("name") or "").strip().casefold()
+        key = name if name else f"__unnamed_{i}"  # never merge rows with no name
+        if key not in best:
+            order.append(key)
+            best[key] = row
+        elif _row_completeness(row) > _row_completeness(best[key]):
+            best[key] = row
+    return [best[k] for k in order]
 
 
 def _image_url(image_id: str | None, size: str = "t_cover_big") -> str | None:
@@ -337,6 +372,8 @@ class IgdbClient:
             clauses.append(f"first_release_date <= {max_date}")
         if query.ordering in _RATING_ORDERINGS:
             clauses.append(f"total_rating_count >= {_MIN_RATING_COUNT_FOR_RATING_SORT}")
+        elif query.ordering in _AGGREGATED_RATING_ORDERINGS:
+            clauses.append(f"aggregated_rating_count >= {_MIN_AGGREGATED_RATING_COUNT}")
         where = query.to_where()
         if where:
             clauses.append(where)
@@ -353,7 +390,7 @@ class IgdbClient:
         parts.append(f"limit {query.page_size};")
         parts.append(f"offset {(query.page - 1) * query.page_size};")
 
-        rows = self._post("games", "".join(parts))
+        rows = _dedup_by_name(self._post("games", "".join(parts)))
         return {"rows": rows}
 
     def get_games(self, query: GameQuery) -> GamesResponse:
@@ -379,6 +416,9 @@ class IgdbClient:
             f"first_release_date <= {now}",
             f"first_release_date > {two_years_ago}",
             "total_rating_count != null",
+            # Ranked by popularity (total_rating_count), but still requires a
+            # critic score so the card never shows a bare "TBD" badge.
+            "aggregated_rating != null",
         ]
         where = query.to_where()
         if where:
@@ -391,7 +431,7 @@ class IgdbClient:
             f"limit {query.page_size};"
             f"offset {(query.page - 1) * query.page_size};"
         )
-        rows = self._post("games", apicalypse)
+        rows = _dedup_by_name(self._post("games", apicalypse))
         return {"rows": rows}
 
     def get_popular_games(self, query: GameQuery) -> GamesResponse:
@@ -425,7 +465,7 @@ class IgdbClient:
             f"limit {query.page_size};"
             f"offset {(query.page - 1) * query.page_size};"
         )
-        rows = self._post("games", apicalypse)
+        rows = _dedup_by_name(self._post("games", apicalypse))
         return {"rows": rows}
 
     def get_recent_games(self, query: GameQuery) -> GamesResponse:

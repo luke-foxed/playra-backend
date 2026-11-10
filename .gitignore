@@ -74,3 +74,12 @@
 # Jupyter
 # =====================
 **/.ipynb_checkpoints/testing.sqlite
+
+# =====================
+# migrate_rawg_ids.py output -- generated locally, never source
+# =====================
+mapping_auto.csv
+mapping_review.csv
+mapping_review_done.csv
+conflicts.csv
+playra/scripts/migrate_rawg_ids_state.json
