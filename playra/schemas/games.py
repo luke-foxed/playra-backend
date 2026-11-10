@@ -40,6 +40,7 @@ class GameResponse(GameSummaryResponse):
     developers: list[str] = []
     publishers: list[str] = []
     screenshot_urls: list[str] = []
+    artwork_url: str | None = None  # wide hero-banner image; falls back to cover_url if absent
     website: str | None = None
     from_cache: bool = Field(default=False, exclude=True)
 
@@ -88,6 +89,22 @@ class GenresResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     results: list[GenreResponse]
+    from_cache: bool = Field(default=False, exclude=True)
+
+
+class PlatformResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: int
+    name: str
+    abbreviation: str | None = None
+    generation: int | None = Field(default=None, exclude=True)
+
+
+class PlatformsResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    results: list[PlatformResponse]
     from_cache: bool = Field(default=False, exclude=True)
 
 

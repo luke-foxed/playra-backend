@@ -191,6 +191,20 @@ def get_genres(request):
         return Response(json.dumps({"error": "An error occurred while fetching data."}), content_type="application/json", charset="utf-8", status=500)
 
 
+@view_config(route_name="platforms", renderer="json", permission="authenticated", request_method="GET")
+@require_role("active", "admin")
+def get_platforms(request):
+    try:
+        igdb_client: IgdbClient = request.registry.igdb_client
+        platforms = igdb_client.get_platforms()
+        return {"data": platforms.model_dump(mode="json"), "from_cache": platforms.from_cache}
+    except (IgdbUnavailableError, IgdbHTTPError) as e:
+        return _igdb_error_response("Error fetching platforms", e)
+    except Exception:
+        log.exception("Error fetching platforms")
+        return Response(json.dumps({"error": "An error occurred while fetching data."}), content_type="application/json", charset="utf-8", status=500)
+
+
 @view_config(route_name="games", renderer="json", permission="authenticated", request_method="GET")
 @require_role("active", "admin")
 def get_games(request):

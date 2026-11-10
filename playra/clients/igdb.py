@@ -18,6 +18,8 @@ from playra.schemas.games import (
     GameSummaryResponse,
     GenreResponse,
     GenresResponse,
+    PlatformResponse,
+    PlatformsResponse,
 )
 
 log = logging.getLogger(__name__)
@@ -52,6 +54,35 @@ _GAME_EXTRAS_TTL = 60 * 60 * 24 * 28  # 28 days
 # against the live API -- this isn't documented anywhere obvious.
 _EXCLUDE_NON_GAME_CATEGORIES = "category != 1 & category != 2 & category != 3 & category != 5 & category != 6 & category != 7 & category != 13 & category != 14"
 
+# IGDB platform id 82 = "Web browser". Browser-only games (idle clickers, old
+# Flash-era ports) slip through the category filter above since IGDB files them
+# as main_game, so they're excluded by platform instead.
+_EXCLUDE_BROWSER_PLATFORM = "platforms != (82)"
+
+# Listing endpoints are browsed visually (cards need art) -- a game missing a
+# cover is unusable there, so every list-returning fetch requires one.
+_HAS_COVER = "cover != null"
+
+_LIST_BASE_CLAUSES = [_EXCLUDE_NON_GAME_CATEGORIES, _EXCLUDE_BROWSER_PLATFORM, _HAS_COVER]
+
+# A handful of IGDB rows carry obviously-wrong far-future release dates (bad
+# data entry, e.g. year 2240) that otherwise float straight to the top of a
+# "newest first" sort. No real announced game is dated more than 5 years out.
+_MAX_FUTURE_RELEASE_YEARS = 5
+
+# Games with only a handful of ratings can swing to a perfect (or zero) total_rating
+# and crowd out genuinely well-known titles on "highest/lowest rated" sorts. Only
+# applied when sorting by rating -- a plain listing or search shouldn't drop games
+# just because they're obscure.
+_MIN_RATING_COUNT_FOR_RATING_SORT = 100
+_RATING_ORDERINGS = frozenset({"rating", "-rating", "total_rating", "-total_rating"})
+
+# Bumped whenever the query logic below changes in a way that would make an
+# already-cached response (same params, same cache key) wrong rather than just
+# stale -- e.g. adding a where-clause. TTL alone doesn't cover that case since the
+# cache key doesn't encode the query logic, only the user-facing params.
+_CACHE_VERSION = 3
+
 _GAME_FIELDS = (
     "id,name,slug,summary,storyline,first_release_date,"
     "cover.image_id,"
@@ -60,6 +91,7 @@ _GAME_FIELDS = (
     "involved_companies.company.name,involved_companies.developer,involved_companies.publisher,"
     "rating,aggregated_rating,total_rating,total_rating_count,hypes,"
     "screenshots.image_id,"
+    "artworks.image_id,"
     "similar_games,"
     "collection.id,collection.name,"
     "websites.url,websites.category,"
@@ -126,6 +158,12 @@ def _normalize_game(row: dict) -> dict:
     # category 1 = "official" per IGDB's website-category enum.
     website = next((w["url"] for w in row.get("websites") or [] if w.get("category") == 1), None)
 
+    # Artworks are IGDB's wide, hero-banner-shaped images -- unlike covers (box
+    # art, portrait) they're meant to be stretched full-width, so the detail
+    # page's hero banner should use one of these over the cover when available.
+    artworks = row.get("artworks") or []
+    artwork_url = _image_url(artworks[0]["image_id"], size="t_1080p") if artworks and artworks[0].get("image_id") else None
+
     return {
         "id": row["id"],
         "slug": row.get("slug", ""),
@@ -134,6 +172,7 @@ def _normalize_game(row: dict) -> dict:
         "storyline": row.get("storyline"),
         "first_release_date": row.get("first_release_date"),
         "cover_url": _image_url(cover.get("image_id")),
+        "artwork_url": artwork_url,
         "genres": [{"id": g["id"], "name": g["name"]} for g in row.get("genres") or []],
         "platforms": [
             {"id": p["id"], "name": p["name"], "abbreviation": p.get("abbreviation")}
@@ -279,9 +318,14 @@ class IgdbClient:
     # which crashes on a list — so every _fetch_* wraps its rows as {"rows": [...]}.
     # get_* methods are the public API — always return typed models.
 
-    @cached(table="game_queries", key_fn=lambda query: {"igdb": "games", **query.cache_key()}, ttl_seconds=_GAMES_TTL)
+    @cached(table="game_queries", key_fn=lambda query: {"igdb": "games", "v": _CACHE_VERSION, **query.cache_key()}, ttl_seconds=_GAMES_TTL)
     def _fetch_games(self, query: GameQuery) -> dict:
-        clauses = [_EXCLUDE_NON_GAME_CATEGORIES]
+        clauses = list(_LIST_BASE_CLAUSES)
+        if query.release_year_max is None:
+            max_date = int(datetime.now(UTC).timestamp()) + _MAX_FUTURE_RELEASE_YEARS * 365 * 86400
+            clauses.append(f"first_release_date <= {max_date}")
+        if query.ordering in _RATING_ORDERINGS:
+            clauses.append(f"total_rating_count >= {_MIN_RATING_COUNT_FOR_RATING_SORT}")
         where = query.to_where()
         if where:
             clauses.append(where)
@@ -312,12 +356,17 @@ class IgdbClient:
             from_cache=cached_result.get("from_cache", False),
         )
 
-    @cached(table="game_queries", key_fn=lambda query: {"igdb_list": "popular", **query.cache_key()}, ttl_seconds=_GAMES_TTL)
+    @cached(table="game_queries", key_fn=lambda query: {"igdb_list": "popular", "v": _CACHE_VERSION, **query.cache_key()}, ttl_seconds=_GAMES_TTL)
     def _fetch_popular_games(self, query: GameQuery) -> dict:
         now = int(datetime.now(UTC).timestamp())
+        # "Popular right now" needs a recency floor, not just an all-time
+        # total_rating_count sort -- otherwise it's indistinguishable from an
+        # all-time-popular list and surfaces the same old hits every time.
+        two_years_ago = now - 2 * 365 * 86400
         clauses = [
-            _EXCLUDE_NON_GAME_CATEGORIES,
+            *_LIST_BASE_CLAUSES,
             f"first_release_date <= {now}",
+            f"first_release_date > {two_years_ago}",
             "total_rating_count != null",
         ]
         where = query.to_where()
@@ -345,12 +394,12 @@ class IgdbClient:
             from_cache=cached_result.get("from_cache", False),
         )
 
-    @cached(table="game_queries", key_fn=lambda query: {"igdb_list": "recent", **query.cache_key()}, ttl_seconds=_GAMES_TTL)
+    @cached(table="game_queries", key_fn=lambda query: {"igdb_list": "recent", "v": _CACHE_VERSION, **query.cache_key()}, ttl_seconds=_GAMES_TTL)
     def _fetch_recent_games(self, query: GameQuery) -> dict:
         now = int(datetime.now(UTC).timestamp())
         thirty_days_ago = now - 30 * 86400
         clauses = [
-            _EXCLUDE_NON_GAME_CATEGORIES,
+            *_LIST_BASE_CLAUSES,
             f"first_release_date <= {now}",
             f"first_release_date > {thirty_days_ago}",
         ]
@@ -488,6 +537,19 @@ class IgdbClient:
         cached_result = self._fetch_genres()
         genres = [GenreResponse(**r) for r in cached_result["rows"]]
         return GenresResponse(results=genres, from_cache=cached_result.get("from_cache", False))
+
+    @cached(table="game_queries", key_fn=lambda: {"igdb_list": "platforms"}, ttl_seconds=_GAME_EXTRAS_TTL)
+    def _fetch_platforms(self) -> dict:
+        rows = self._post(
+            "platforms",
+            "fields id,name,abbreviation,generation; sort generation desc; limit 500;",
+        )
+        return {"rows": rows}
+
+    def get_platforms(self) -> PlatformsResponse:
+        cached_result = self._fetch_platforms()
+        platforms = [PlatformResponse(**r) for r in cached_result["rows"]]
+        return PlatformsResponse(results=platforms, from_cache=cached_result.get("from_cache", False))
 
     def search_raw(self, name: str, limit: int = 10) -> list[dict]:
         """Uncached — used by the one-off id-migration script, which runs a batch
