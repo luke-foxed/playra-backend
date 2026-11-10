@@ -52,7 +52,18 @@ _GAME_EXTRAS_TTL = 60 * 60 * 24 * 28  # 28 days
 # name instead of matching the default: dlc_addon(1), expansion(2), bundle(3),
 # mod(5), episode(6), season(7), pack(13), update(14). Confirmed empirically
 # against the live API -- this isn't documented anywhere obvious.
-_EXCLUDE_NON_GAME_CATEGORIES = "category != 1 & category != 2 & category != 3 & category != 5 & category != 6 & category != 7 & category != 13 & category != 14"
+#
+# The explicit `category = null |` is required too, and not redundant with the
+# `!=` chain: a plain `where`-only query treats an omitted/unset field as
+# matching every `!=` comparison (which is what makes the chain work at all),
+# but as soon as the request also has a `search` clause, IGDB's search-ranked
+# filtering evaluates `category != X` against an unset field as false instead
+# -- so searching ("zelda") combined with the bare `!=` chain silently returned
+# zero results. Explicitly allowing `category = null` covers both code paths.
+_EXCLUDE_NON_GAME_CATEGORIES = (
+    "(category = null | (category != 1 & category != 2 & category != 3 & "
+    "category != 5 & category != 6 & category != 7 & category != 13 & category != 14))"
+)
 
 # IGDB platform id 82 = "Web browser". Browser-only games (idle clickers, old
 # Flash-era ports) slip through the category filter above since IGDB files them
@@ -81,7 +92,7 @@ _RATING_ORDERINGS = frozenset({"rating", "-rating", "total_rating", "-total_rati
 # already-cached response (same params, same cache key) wrong rather than just
 # stale -- e.g. adding a where-clause. TTL alone doesn't cover that case since the
 # cache key doesn't encode the query logic, only the user-facing params.
-_CACHE_VERSION = 3
+_CACHE_VERSION = 4
 
 _GAME_FIELDS = (
     "id,name,slug,summary,storyline,first_release_date,"
