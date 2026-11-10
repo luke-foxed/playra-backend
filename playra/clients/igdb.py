@@ -552,7 +552,7 @@ class IgdbClient:
         ]
         return GameScreenshotsResponse(results=urls, from_cache=cached_result.get("from_cache", False))
 
-    @cached(table="games", key_fn=lambda igdb_id: f"igdb:{igdb_id}:related", ttl_seconds=_GAME_EXTRAS_TTL)
+    @cached(table="games", key_fn=lambda igdb_id: f"igdb:{igdb_id}:related:v2", ttl_seconds=_GAME_EXTRAS_TTL)
     def _fetch_game_related(self, igdb_id: int) -> dict:
         # Can't do this in one Apicalypse call — the collection id and similar-game
         # ids aren't known until the base game is fetched, and IGDB's /multiquery
@@ -572,7 +572,8 @@ class IgdbClient:
         if collection:
             coll_rows = self._post(
                 "collections",
-                "fields games.id,games.name,games.slug,games.cover.image_id,games.first_release_date;"
+                "fields games.id,games.name,games.slug,games.cover.image_id,"
+                "games.first_release_date,games.genres.id,games.genres.name;"
                 f" where id = {collection['id']};",
             )
             if coll_rows:
@@ -584,6 +585,7 @@ class IgdbClient:
                         "slug": g.get("slug"),
                         "cover_url": _image_url((g.get("cover") or {}).get("image_id")),
                         "first_release_date": g.get("first_release_date"),
+                        "genres": [{"id": gen["id"], "name": gen["name"]} for gen in g.get("genres") or []],
                     }
                     for g in (coll_rows[0].get("games") or [])
                     if g.get("id") != igdb_id
@@ -595,7 +597,8 @@ class IgdbClient:
             ids_clause = ",".join(str(i) for i in similar_ids)
             sim_rows = self._post(
                 "games",
-                f"fields id,name,slug,cover.image_id,first_release_date,total_rating; where id = ({ids_clause});",
+                "fields id,name,slug,cover.image_id,first_release_date,total_rating,genres.id,genres.name;"
+                f" where id = ({ids_clause});",
             )
             similar_games = [
                 {
@@ -605,6 +608,7 @@ class IgdbClient:
                     "cover_url": _image_url((g.get("cover") or {}).get("image_id")),
                     "first_release_date": g.get("first_release_date"),
                     "total_rating": g.get("total_rating"),
+                    "genres": [{"id": gen["id"], "name": gen["name"]} for gen in g.get("genres") or []],
                 }
                 for g in sim_rows
             ]
