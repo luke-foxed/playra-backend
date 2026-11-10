@@ -42,9 +42,15 @@ _GAMES_TTL = 60 * 60 * 24            # 24 hours
 _GAME_TTL = 60 * 60 * 24 * 7         # 7 days
 _GAME_EXTRAS_TTL = 60 * 60 * 24 * 28  # 28 days
 
-# IGDB game `category` enum: 0 = main_game. Keeps DLC/expansions/bundles/ports out of
-# the popular/recent lists, matching what a "games" page actually wants to show.
-_MAIN_GAME_CATEGORY = 0
+# IGDB omits a field from its JSON entirely when it equals that field's numeric
+# default -- and `category`'s default is 0 (main_game), the single most common
+# value. So `where category = 0` (or `!= null`) matches nothing: IGDB's query
+# engine treats those omitted-default rows as unset, not as literally 0. The
+# only way to keep "main game" filtering is to exclude the *other* categories by
+# name instead of matching the default: dlc_addon(1), expansion(2), bundle(3),
+# mod(5), episode(6), season(7), pack(13), update(14). Confirmed empirically
+# against the live API -- this isn't documented anywhere obvious.
+_EXCLUDE_NON_GAME_CATEGORIES = "category != 1 & category != 2 & category != 3 & category != 5 & category != 6 & category != 7 & category != 13 & category != 14"
 
 _GAME_FIELDS = (
     "id,name,slug,summary,storyline,first_release_date,"
@@ -275,7 +281,7 @@ class IgdbClient:
 
     @cached(table="game_queries", key_fn=lambda query: {"igdb": "games", **query.cache_key()}, ttl_seconds=_GAMES_TTL)
     def _fetch_games(self, query: GameQuery) -> dict:
-        clauses = [f"category = {_MAIN_GAME_CATEGORY}"]
+        clauses = [_EXCLUDE_NON_GAME_CATEGORIES]
         where = query.to_where()
         if where:
             clauses.append(where)
@@ -310,7 +316,7 @@ class IgdbClient:
     def _fetch_popular_games(self, query: GameQuery) -> dict:
         now = int(datetime.now(UTC).timestamp())
         clauses = [
-            f"category = {_MAIN_GAME_CATEGORY}",
+            _EXCLUDE_NON_GAME_CATEGORIES,
             f"first_release_date <= {now}",
             "total_rating_count != null",
         ]
@@ -344,7 +350,7 @@ class IgdbClient:
         now = int(datetime.now(UTC).timestamp())
         thirty_days_ago = now - 30 * 86400
         clauses = [
-            f"category = {_MAIN_GAME_CATEGORY}",
+            _EXCLUDE_NON_GAME_CATEGORIES,
             f"first_release_date <= {now}",
             f"first_release_date > {thirty_days_ago}",
         ]
