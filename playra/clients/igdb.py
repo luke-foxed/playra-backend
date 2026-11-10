@@ -100,7 +100,7 @@ _AGGREGATED_RATING_ORDERINGS = frozenset({"aggregated_rating", "-aggregated_rati
 # already-cached response (same params, same cache key) wrong rather than just
 # stale -- e.g. adding a where-clause. TTL alone doesn't cover that case since the
 # cache key doesn't encode the query logic, only the user-facing params.
-_CACHE_VERSION = 6
+_CACHE_VERSION = 8
 
 _GAME_FIELDS = (
     "id,name,slug,summary,storyline,first_release_date,"
@@ -378,15 +378,11 @@ class IgdbClient:
         if where:
             clauses.append(where)
 
-        parts = []
-        if query.search:
-            parts.append(f'search "{_escape_search(query.search)}";')
-        parts.append(f"fields {_GAME_FIELDS};")
-        parts.append(f"where {' & '.join(clauses)};")
+        static_parts = [f"fields {_GAME_FIELDS};", f"where {' & '.join(clauses)};"]
         if query.ordering and not query.search:
             # IGDB ignores an explicit `sort` when `search` is present — it ranks
             # by relevance instead. Matches RAWG's old "drop ordering on search" rule.
-            parts.append(f"sort {_sort_clause(query.ordering)};")
+            static_parts.append(f"sort {_sort_clause(query.ordering)};")
 
         if query.search:
             # IGDB's search ranks purely by text relevance, which buries a
@@ -396,12 +392,32 @@ class IgdbClient:
             # re-sort it by total_rating_count so real, known matches surface
             # first, then paginate locally from that re-sorted pool.
             pool_size = min(max(query.page * query.page_size * 2, 50), 200)
-            parts.append(f"limit {pool_size};")
+            static_parts.append(f"limit {pool_size};")
         else:
-            parts.append(f"limit {query.page_size};")
-            parts.append(f"offset {(query.page - 1) * query.page_size};")
+            static_parts.append(f"limit {query.page_size};")
+            static_parts.append(f"offset {(query.page - 1) * query.page_size};")
 
-        rows = _dedup_by_name(self._post("games", "".join(parts)))
+        def run_search(search_text: str) -> list[dict]:
+            parts = [f'search "{_escape_search(search_text)}";', *static_parts]
+            return self._post("games", "".join(parts))
+
+        if query.search:
+            rows = run_search(query.search)
+            if not rows:
+                # IGDB's search matches whole words only (no general prefix
+                # support), and a trailing word the user is still typing kills
+                # the entire multi-word match rather than being ignored --
+                # confirmed empirically, e.g. "grand theft au" returns nothing
+                # even though "grand theft" alone works. Retry once with the
+                # last word dropped so a type-ahead search degrades to the
+                # last *complete* word instead of going blank mid-keystroke.
+                tokens = query.search.split()
+                if len(tokens) > 1:
+                    rows = run_search(" ".join(tokens[:-1]))
+        else:
+            rows = self._post("games", "".join(static_parts))
+
+        rows = _dedup_by_name(rows)
 
         if query.search:
             rows.sort(key=lambda r: r.get("total_rating_count") or 0, reverse=True)
