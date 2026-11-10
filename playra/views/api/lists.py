@@ -242,5 +242,3 @@ def remove_games_from_list(request):
     except Exception:
         log.exception("Error removing games from list %s", user_list_id)
         return Response(json.dumps({"error": "An error occurred while removing games."}), content_type="application/json", charset="utf-8", status=500)
-
-

@@ -14,7 +14,6 @@ from playra.schemas.games import GameQuery, GamesResponse
 log = logging.getLogger(__name__)
 
 # Statuses that mean "IGDB is having a bad time", not "the request was wrong".
-# No Cloudflare 520-524 range here — that was a RAWG-specific quirk.
 _UPSTREAM_DOWN_STATUSES = frozenset({429, 500, 502, 503, 504})
 
 
@@ -74,7 +73,7 @@ def _attach_community_ratings(games_response: GamesResponse, supabase_client) ->
         scores = totals.get(game.id)
         game.playra_community_score = round(sum(scores) / len(scores), 2) if scores else None
 
-# IGDB is numeric-id-only -- no slug lookup, unlike RAWG's slug-or-id paths.
+# IGDB is numeric-id-only -- no slug lookup.
 _GAME_ID_RE = re.compile(r"^\d+$")
 
 

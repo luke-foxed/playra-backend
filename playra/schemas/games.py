@@ -63,11 +63,8 @@ class GameScreenshotsResponse(BaseModel):
 
 
 class GameRelatedResponse(BaseModel):
-    """Replaces RAWG's "game series" concept, which has no 1:1 IGDB equivalent.
-
-    Combines IGDB's `collection` (franchise, e.g. all "Dark Souls" games) with
-    `similar_games` (IGDB's own similarity graph) into one related-games view.
-    """
+    """Combines IGDB's `collection` (franchise, e.g. all "Dark Souls" games)
+    with `similar_games` (IGDB's own similarity graph) into one related-games view."""
 
     model_config = ConfigDict(extra="allow")
 
@@ -143,9 +140,7 @@ class GameQuery(BaseModel):
 
     def to_where(self) -> str:
         """Builds an Apicalypse `where` clause body (no leading "where ") from the
-        structured filters. Free-text `search` is handled separately by the caller,
-        since Apicalypse doesn't combine `search` and `where` on the same field set
-        the way RAWG's flat query params did."""
+        structured filters. Free-text `search` is handled separately by the caller."""
         clauses = []
         for field in ("genres", "platforms", "themes", "game_modes", "player_perspectives"):
             values = getattr(self, field)

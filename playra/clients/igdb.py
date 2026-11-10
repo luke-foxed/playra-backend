@@ -45,22 +45,16 @@ _GAMES_TTL = 60 * 60 * 24            # 24 hours
 _GAME_TTL = 60 * 60 * 24 * 7         # 7 days
 _GAME_EXTRAS_TTL = 60 * 60 * 24 * 28  # 28 days
 
-# IGDB omits a field from its JSON entirely when it equals that field's numeric
-# default -- and `category`'s default is 0 (main_game), the single most common
-# value. So `where category = 0` (or `!= null`) matches nothing: IGDB's query
-# engine treats those omitted-default rows as unset, not as literally 0. The
-# only way to keep "main game" filtering is to exclude the *other* categories by
-# name instead of matching the default: dlc_addon(1), expansion(2), bundle(3),
-# mod(5), episode(6), season(7), pack(13), update(14). Confirmed empirically
-# against the live API -- this isn't documented anywhere obvious.
+# IGDB omits a field from its JSON when it equals that field's numeric default,
+# and `category`'s default is 0 (main_game) -- so `category = 0` matches
+# nothing; IGDB treats an omitted-default field as unset, not as literally 0.
+# Exclude the other categories by name instead: dlc_addon(1), expansion(2),
+# bundle(3), mod(5), episode(6), season(7), pack(13), update(14).
 #
-# The explicit `category = null |` is required too, and not redundant with the
-# `!=` chain: a plain `where`-only query treats an omitted/unset field as
-# matching every `!=` comparison (which is what makes the chain work at all),
-# but as soon as the request also has a `search` clause, IGDB's search-ranked
-# filtering evaluates `category != X` against an unset field as false instead
-# -- so searching ("zelda") combined with the bare `!=` chain silently returned
-# zero results. Explicitly allowing `category = null` covers both code paths.
+# `category = null |` is required too: a plain `where` query treats an unset
+# field as matching every `!=` comparison, but adding a `search` clause makes
+# IGDB evaluate `category != X` against an unset field as false instead --
+# so search + the bare `!=` chain alone returned zero rows.
 _EXCLUDE_NON_GAME_CATEGORIES = (
     "(category = null | (category != 1 & category != 2 & category != 3 & "
     "category != 5 & category != 6 & category != 7 & category != 13 & category != 14))"
@@ -160,10 +154,8 @@ def _escape_search(term: str) -> str:
     return term.replace("\\", "\\\\").replace('"', '\\"')
 
 
-# A no-space colon (e.g. "NieR:Automata", a common way titles with a colon get
-# typed or stored) breaks IGDB's search tokenizer outright -- it returns zero
-# results even though "NieR: Automata" / "NieR Automata" both match the real
-# game fine. Confirmed empirically against the live API.
+# A no-space colon (e.g. "NieR:Automata") breaks IGDB's search tokenizer --
+# zero results, even though "NieR: Automata" matches fine.
 _NOSPACE_COLON_RE = re.compile(r":(?=\S)")
 
 
@@ -186,11 +178,9 @@ def _row_completeness(row: dict) -> tuple:
 
 
 def _dedup_by_name(rows: list[dict]) -> list[dict]:
-    """IGDB sometimes carries two rows for what's really the same game -- most
-    visibly two separate "Grand Theft Auto V" entries, a thin regional/SKU
-    variant missing a cover and critic score alongside the complete one. Keep
-    only the most complete row per exact (case-folded) name, preserving the
-    original ordering of each name's first occurrence."""
+    """IGDB sometimes carries two rows for the same game (e.g. a thin regional
+    SKU alongside the complete entry). Keep the most complete row per
+    case-folded name, preserving first-occurrence order."""
     best: dict[str, dict] = {}
     order: list[str] = []
     for i, row in enumerate(rows):
@@ -392,17 +382,13 @@ class IgdbClient:
 
         static_parts = [f"fields {_GAME_FIELDS};", f"where {' & '.join(clauses)};"]
         if query.ordering and not query.search:
-            # IGDB ignores an explicit `sort` when `search` is present — it ranks
-            # by relevance instead. Matches RAWG's old "drop ordering on search" rule.
+            # IGDB ignores an explicit `sort` when `search` is present — it ranks by relevance instead.
             static_parts.append(f"sort {_sort_clause(query.ordering)};")
 
         if query.search:
-            # IGDB's search ranks purely by text relevance, which buries a
-            # well-known entry (e.g. "Grand Theft Auto IV") under obscure
-            # same-titled SKUs/ports that match the text just as well but have
-            # no popularity behind them. Pull a wider relevance-ranked pool and
-            # re-sort it by total_rating_count so real, known matches surface
-            # first, then paginate locally from that re-sorted pool.
+            # IGDB's search ranks by text relevance alone, burying well-known
+            # titles under obscure same-titled SKUs. Pull a wider pool, re-sort
+            # it by total_rating_count, then paginate locally from that.
             pool_size = min(max(query.page * query.page_size * 2, 50), 200)
             static_parts.append(f"limit {pool_size};")
         else:
@@ -416,13 +402,10 @@ class IgdbClient:
         if query.search:
             rows = run_search(query.search)
             if not rows:
-                # IGDB's search matches whole words only (no general prefix
-                # support), and a trailing word the user is still typing kills
-                # the entire multi-word match rather than being ignored --
-                # confirmed empirically, e.g. "grand theft au" returns nothing
-                # even though "grand theft" alone works. Retry once with the
-                # last word dropped so a type-ahead search degrades to the
-                # last *complete* word instead of going blank mid-keystroke.
+                # IGDB's search matches whole words only -- a trailing word the
+                # user is still typing kills the whole multi-word match (e.g.
+                # "grand theft au" returns nothing). Retry with it dropped so
+                # type-ahead degrades to the last complete word instead of going blank.
                 tokens = query.search.split()
                 if len(tokens) > 1:
                     rows = run_search(" ".join(tokens[:-1]))
@@ -589,12 +572,11 @@ class IgdbClient:
         ]
         return GameScreenshotsResponse(results=urls, from_cache=cached_result.get("from_cache", False))
 
-    @cached(table="games", key_fn=lambda igdb_id: f"igdb:{igdb_id}:related:v3", ttl_seconds=_GAME_EXTRAS_TTL)
+    @cached(table="games", key_fn=lambda igdb_id: f"igdb:{igdb_id}:related:v4", ttl_seconds=_GAME_EXTRAS_TTL)
     def _fetch_game_related(self, igdb_id: int) -> dict:
-        # Can't do this in one Apicalypse call — the collection id and similar-game
-        # ids aren't known until the base game is fetched, and IGDB's /multiquery
-        # can't template on a prior sub-query's result. Cached as one combined
-        # entry so repeat requests only pay this 2-3x round trip cost once.
+        # Collection/similar_games ids aren't known until the base game is
+        # fetched, and IGDB's /multiquery can't template on a prior result --
+        # cached as one combined entry so repeats don't re-pay the round trips.
         base_rows = self._post(
             "games",
             f"fields collection.id,collection.name,similar_games; where id = {igdb_id};",
@@ -635,7 +617,7 @@ class IgdbClient:
             ids_clause = ",".join(str(i) for i in similar_ids)
             sim_rows = self._post(
                 "games",
-                "fields id,name,slug,cover.image_id,first_release_date,total_rating,"
+                "fields id,name,slug,cover.image_id,first_release_date,"
                 "aggregated_rating,genres.id,genres.name;"
                 f" where id = ({ids_clause});",
             )
@@ -646,7 +628,6 @@ class IgdbClient:
                     "slug": g.get("slug"),
                     "cover_url": _image_url((g.get("cover") or {}).get("image_id")),
                     "first_release_date": g.get("first_release_date"),
-                    "total_rating": g.get("total_rating"),
                     "genres": [{"id": gen["id"], "name": gen["name"]} for gen in g.get("genres") or []],
                     "aggregated_rating": g.get("aggregated_rating"),
                 }

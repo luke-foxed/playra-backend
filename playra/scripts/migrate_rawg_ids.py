@@ -4,33 +4,24 @@ Usage:
     python -m playra.scripts.migrate_rawg_ids --dry-run
     python -m playra.scripts.migrate_rawg_ids --apply mapping_auto.csv mapping_review_done.csv
 
-`--dry-run` only SELECTs from Supabase and only makes read-only calls to IGDB --
-it never calls .update()/.insert()/.delete(). That makes it safe to run directly
-against production to generate the review report before anything is actually
-changed.
+`--dry-run` is read-only (SELECTs + read-only IGDB calls, no .update()/.insert()/
+.delete()), so it's safe to run directly against production to generate the
+review report before anything changes.
 
-Originally this looked up each RAWG id's name/release year by calling RAWG's API
-directly. That turned out to be unreliable (RAWG itself is the flaky service
-that started this whole migration) and unnecessary: `list_games` already stores
-the name/release_year it had at add-time as a denormalized snapshot, written by
-the frontend when the row was created. Reading that instead means this script
-makes zero RAWG calls and zero RAWG_API_KEY dependency.
+Name/release_year come from `list_games`' own denormalized snapshot rather than
+RAWG's API, which was both unreliable and unnecessary to call here.
 
 Flow:
-    1. `--dry-run` reads every distinct `game_id` (with its stored name and
-       release_year) in `list_games`, searches IGDB for name matches, and scores
-       the candidates. High-confidence matches go to mapping_auto.csv (ready to
-       apply as-is). Everything else -- no stored name, no IGDB candidates, or an
-       ambiguous/low score -- goes to mapping_review.csv with a blank `igdb_id`
-       column and the top candidates listed, for a human to fill in. Nothing
-       ambiguous is ever auto-applied.
+    1. `--dry-run` scores IGDB candidates per distinct `game_id` in `list_games`.
+       High-confidence matches go to mapping_auto.csv (ready to apply as-is);
+       everything else goes to mapping_review.csv with a blank `igdb_id` column
+       for a human to fill in. Nothing ambiguous is ever auto-applied.
     2. Fill in mapping_review.csv's `igdb_id` column by hand (e.g. save as
        mapping_review_done.csv).
     3. `--apply mapping_auto.csv mapping_review_done.csv` rewrites
        list_games.game_id for every row with a filled-in igdb_id. Idempotent via
-       a local state file -- rerunning skips ids already migrated. Rows whose
-       target id would collide with an existing row in the same list are skipped
-       and logged to conflicts.csv instead of applied.
+       a local state file. Rows that would collide with an existing row in the
+       same list are skipped and logged to conflicts.csv instead.
 """
 import argparse
 import csv
@@ -54,21 +45,17 @@ DEFAULT_AUTO_CSV = Path("mapping_auto.csv")
 DEFAULT_REVIEW_CSV = Path("mapping_review.csv")
 DEFAULT_CONFLICTS_CSV = Path("conflicts.csv")
 
-# 90+ on normalized-name ratio reliably means "same title, maybe edition/subtitle
-# differences". The margin guards against two distinctly different games with
-# similar names (e.g. "Need for Speed" vs "Need for Speed: Heat") both scoring
-# high -- those must go to manual review, not be silently resolved.
+# 90+ on normalized-name ratio means "same title, maybe edition/subtitle
+# differences". The margin guards against two distinct games with similar
+# names (e.g. "Need for Speed" vs "Need for Speed: Heat") both scoring high.
 AUTO_ACCEPT_SCORE = 90
 AUTO_ACCEPT_MARGIN = 8
 CANDIDATE_COUNT = 5
 
 _PUNCT_RE = re.compile(r'[^\w\s]')
-# RAWG appends "(YYYY)" to a stored name only to disambiguate same-titled games
-# (e.g. "God of War (2018)" vs the 2005 original) -- it's not part of the real
-# title, and IGDB's search returns zero results for a query containing it.
-# (A no-space colon, e.g. "NieR:Automata", is a similar IGDB search footgun --
-# that fix lives in igdb.py's `search_raw`, since the live in-app search can
-# hit the same thing, not just this script.)
+# RAWG appends "(YYYY)" to a stored name to disambiguate same-titled games
+# (e.g. "God of War (2018)") -- not part of the real title, and IGDB's search
+# returns zero results for a query containing it.
 _TRAILING_YEAR_RE = re.compile(r'\s*\(\d{4}\)\s*$')
 
 
