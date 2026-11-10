@@ -44,7 +44,7 @@ from pathlib import Path
 from rapidfuzz import fuzz
 
 from playra.clients.cache import CacheClient
-from playra.clients.igdb import get_igdb_client
+from playra.clients.igdb import _dedup_by_name, get_igdb_client
 from playra.clients.supabase import get_supabase_client
 
 log = logging.getLogger(__name__)
@@ -66,6 +66,9 @@ _PUNCT_RE = re.compile(r'[^\w\s]')
 # RAWG appends "(YYYY)" to a stored name only to disambiguate same-titled games
 # (e.g. "God of War (2018)" vs the 2005 original) -- it's not part of the real
 # title, and IGDB's search returns zero results for a query containing it.
+# (A no-space colon, e.g. "NieR:Automata", is a similar IGDB search footgun --
+# that fix lives in igdb.py's `search_raw`, since the live in-app search can
+# hit the same thing, not just this script.)
 _TRAILING_YEAR_RE = re.compile(r'\s*\(\d{4}\)\s*$')
 
 
@@ -84,8 +87,15 @@ def _year_from_unix(ts: int | None) -> int | None:
 
 
 def score_candidate(rawg_name: str, rawg_year: int | None, candidate: dict) -> int:
-    """Pure and deterministic -- directly gates auto-accept vs. manual review."""
-    name_score = fuzz.ratio(_normalize_name(rawg_name), _normalize_name(candidate.get("name", "")))
+    """Pure and deterministic -- directly gates auto-accept vs. manual review.
+
+    `rawg_name` should already have RAWG's "(YYYY)" disambiguation suffix
+    stripped (via `_search_name`) -- comparing against the raw, suffixed name
+    here would unfairly dock every candidate's fuzzy-match score by exactly
+    the length of a suffix that isn't part of the real title."""
+    normalized_rawg = _normalize_name(rawg_name)
+    normalized_candidate = _normalize_name(candidate.get("name", ""))
+    name_score = fuzz.ratio(normalized_rawg, normalized_candidate)
 
     candidate_year = _year_from_unix(candidate.get("first_release_date"))
     bonus = 0
@@ -99,6 +109,18 @@ def score_candidate(rawg_name: str, rawg_year: int | None, candidate: dict) -> i
             bonus = -15
 
     return max(0, min(100, round(name_score + bonus)))
+
+
+def _is_exact_match(rawg_name: str, candidate: dict) -> bool:
+    """True if candidate's name is identical to rawg_name once normalized.
+
+    This is checked separately from the fuzzy score because a near-exact DLC/
+    edition variant name ("... - Gold Edition") can fuzzy-score just as high
+    -- sometimes identically, once the +10 same-year bonus clamps both at the
+    100 ceiling -- leaving no numeric margin between the real answer and a
+    variant that isn't really a competing match at all."""
+    normalized_rawg = _normalize_name(rawg_name)
+    return bool(normalized_rawg) and normalized_rawg == _normalize_name(candidate.get("name", ""))
 
 
 def _distinct_rawg_games(supabase) -> list[tuple[int, str, int | None]]:
@@ -180,17 +202,30 @@ def run_dry_run(
             review_rows.append(_review_row(rawg_id, "", None, [], candidates, "no name stored on list_games for this id"))
             continue
 
+        search_name = _search_name(rawg_name)
+
         try:
-            raw_candidates = igdb.search_raw(_search_name(rawg_name), limit=candidates)
+            # IGDB's own relevance ranking is unreliable for short/common
+            # titles -- "Control", "Stray", and "Super Mario Odyssey" didn't
+            # even appear in the first 15 relevance-ranked results, buried
+            # under unrelated titles that happen to share a word. Fetch a much
+            # wider pool (up to 40) so the real game has a chance to be seen,
+            # dedup it (IGDB often returns the same game as two rows -- a
+            # thin SKU/regional variant alongside the complete one), then
+            # score every deduped candidate and keep only the top N *after*
+            # scoring -- slicing before scoring would miss a correct match
+            # that only IGDB's relevance ranking, not ours, ranked low.
+            pool = _dedup_by_name(igdb.search_raw(search_name, limit=max(candidates * 8, 40)))
         except Exception as e:
             log.warning("IGDB search failed for RAWG id %s (%s): %s", rawg_id, rawg_name, e)
-            raw_candidates = []
+            pool = []
 
-        scored = sorted(
-            ((c, score_candidate(rawg_name, rawg_year, c)) for c in raw_candidates),
+        scored_all = sorted(
+            ((c, score_candidate(search_name, rawg_year, c)) for c in pool),
             key=lambda pair: pair[1],
             reverse=True,
         )
+        scored = scored_all[:candidates]
 
         if not scored:
             review_rows.append(_review_row(rawg_id, rawg_name, rawg_year, [], candidates, "no IGDB candidates found"))
@@ -199,7 +234,14 @@ def run_dry_run(
         top_candidate, top_score = scored[0]
         margin = top_score - (scored[1][1] if len(scored) > 1 else 0)
 
-        if top_score >= threshold_auto and margin >= threshold_margin:
+        exact_matches = [c for c in pool if _is_exact_match(search_name, c)]
+        # A unique exact title match beats any numeric margin check -- a DLC/
+        # edition variant fuzzy-scoring close behind isn't really a competing
+        # answer to "is this the base game", so there's nothing genuinely
+        # ambiguous here even when the margin looks thin.
+        unique_exact_match = len(exact_matches) == 1 and exact_matches[0]["id"] == top_candidate["id"]
+
+        if unique_exact_match or (top_score >= threshold_auto and margin >= threshold_margin):
             auto_rows.append({
                 "rawg_id": rawg_id,
                 "rawg_name": rawg_name,
@@ -212,6 +254,8 @@ def run_dry_run(
             })
         else:
             note = f"low confidence or ambiguous (top score {top_score}, margin {margin})"
+            if len(exact_matches) > 1:
+                note = f"{len(exact_matches)} candidates share an identical normalized name -- genuine duplicate, needs a human pick"
             review_rows.append(_review_row(rawg_id, rawg_name, rawg_year, scored, candidates, note))
 
     _write_csv(auto_csv, auto_rows, ["rawg_id", "rawg_name", "rawg_release_year", "igdb_id", "igdb_name", "igdb_release_year", "score", "margin"])

@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import threading
 import time
 from datetime import UTC, datetime, timedelta
@@ -100,7 +101,7 @@ _AGGREGATED_RATING_ORDERINGS = frozenset({"aggregated_rating", "-aggregated_rati
 # already-cached response (same params, same cache key) wrong rather than just
 # stale -- e.g. adding a where-clause. TTL alone doesn't cover that case since the
 # cache key doesn't encode the query logic, only the user-facing params.
-_CACHE_VERSION = 8
+_CACHE_VERSION = 9
 
 _GAME_FIELDS = (
     "id,name,slug,summary,storyline,first_release_date,"
@@ -157,6 +158,17 @@ def _scrub(text: str, *secrets: str) -> str:
 
 def _escape_search(term: str) -> str:
     return term.replace("\\", "\\\\").replace('"', '\\"')
+
+
+# A no-space colon (e.g. "NieR:Automata", a common way titles with a colon get
+# typed or stored) breaks IGDB's search tokenizer outright -- it returns zero
+# results even though "NieR: Automata" / "NieR Automata" both match the real
+# game fine. Confirmed empirically against the live API.
+_NOSPACE_COLON_RE = re.compile(r":(?=\S)")
+
+
+def _fix_search_text(term: str) -> str:
+    return _NOSPACE_COLON_RE.sub(": ", term)
 
 
 def _sort_clause(ordering: str) -> str:
@@ -398,7 +410,7 @@ class IgdbClient:
             static_parts.append(f"offset {(query.page - 1) * query.page_size};")
 
         def run_search(search_text: str) -> list[dict]:
-            parts = [f'search "{_escape_search(search_text)}";', *static_parts]
+            parts = [f'search "{_escape_search(_fix_search_text(search_text))}";', *static_parts]
             return self._post("games", "".join(parts))
 
         if query.search:
@@ -638,7 +650,11 @@ class IgdbClient:
     def search_raw(self, name: str, limit: int = 10) -> list[dict]:
         """Uncached — used by the one-off id-migration script, which runs a batch
         of throwaway matching queries that shouldn't pollute the response cache."""
-        query = f'search "{_escape_search(name)}"; fields id,name,slug,first_release_date; limit {limit};'
+        query = (
+            f'search "{_escape_search(_fix_search_text(name))}"; '
+            "fields id,name,slug,first_release_date,total_rating_count,cover.image_id; "
+            f"limit {limit};"
+        )
         return self._post("games", query)
 
 
