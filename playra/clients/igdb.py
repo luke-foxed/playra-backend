@@ -100,7 +100,7 @@ _AGGREGATED_RATING_ORDERINGS = frozenset({"aggregated_rating", "-aggregated_rati
 # already-cached response (same params, same cache key) wrong rather than just
 # stale -- e.g. adding a where-clause. TTL alone doesn't cover that case since the
 # cache key doesn't encode the query logic, only the user-facing params.
-_CACHE_VERSION = 5
+_CACHE_VERSION = 6
 
 _GAME_FIELDS = (
     "id,name,slug,summary,storyline,first_release_date,"
@@ -387,10 +387,27 @@ class IgdbClient:
             # IGDB ignores an explicit `sort` when `search` is present — it ranks
             # by relevance instead. Matches RAWG's old "drop ordering on search" rule.
             parts.append(f"sort {_sort_clause(query.ordering)};")
-        parts.append(f"limit {query.page_size};")
-        parts.append(f"offset {(query.page - 1) * query.page_size};")
+
+        if query.search:
+            # IGDB's search ranks purely by text relevance, which buries a
+            # well-known entry (e.g. "Grand Theft Auto IV") under obscure
+            # same-titled SKUs/ports that match the text just as well but have
+            # no popularity behind them. Pull a wider relevance-ranked pool and
+            # re-sort it by total_rating_count so real, known matches surface
+            # first, then paginate locally from that re-sorted pool.
+            pool_size = min(max(query.page * query.page_size * 2, 50), 200)
+            parts.append(f"limit {pool_size};")
+        else:
+            parts.append(f"limit {query.page_size};")
+            parts.append(f"offset {(query.page - 1) * query.page_size};")
 
         rows = _dedup_by_name(self._post("games", "".join(parts)))
+
+        if query.search:
+            rows.sort(key=lambda r: r.get("total_rating_count") or 0, reverse=True)
+            start = (query.page - 1) * query.page_size
+            rows = rows[start:start + query.page_size]
+
         return {"rows": rows}
 
     def get_games(self, query: GameQuery) -> GamesResponse:
