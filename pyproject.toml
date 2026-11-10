@@ -41,10 +41,16 @@ testing = [
     "pytest",
     "pytest-cov",
 ]
+# Only needed for one-off scripts that run raw DDL against Supabase's Postgres
+# directly -- supabase-py/PostgREST has no way to run ALTER TABLE.
+scripts = [
+    "psycopg2-binary",
+]
 
 [project.scripts]
 initialize_playra_db = "playra.scripts.initialize_db:main"
 migrate_rawg_ids = "playra.scripts.migrate_rawg_ids:main"
+apply_schema_changes = "playra.scripts.apply_schema_changes:main"
 
 [project.entry-points."paste.app_factory"]
 main = "playra:main"
