@@ -83,3 +83,4 @@ mapping_review.csv
 mapping_review_done.csv
 conflicts.csv
 playra/scripts/migrate_rawg_ids_state.json
+list_games_backup_*.csv
