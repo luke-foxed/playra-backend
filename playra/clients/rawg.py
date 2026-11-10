@@ -1,13 +1,51 @@
+import logging
 import os
 import re
 
 import requests
 from rapidfuzz import fuzz
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from playra.clients.cache import cached
 from playra.schemas.games import GameQuery, GameResponse, GameScreenshotsResponse, GameSeriesResponse, GamesResponse, GenresResponse
 
+log = logging.getLogger(__name__)
+
 BASE_URL = "https://api.rawg.io/api"
+
+# (connect, read). RAWG sits behind Cloudflare and can hang; without this a waitress
+# thread blocks indefinitely and the whole worker pool fills up.
+_TIMEOUT = (3.05, 10)
+
+# RAWG/Cloudflare throw transient 5xx (notably 520-524) under load. Retry those and
+# connection errors; leave 4xx alone.
+_RETRY_STATUSES = (429, 500, 502, 503, 504, 520, 521, 522, 523, 524)
+
+
+class RawgHTTPError(requests.HTTPError):
+    """RAWG returned an error status. Message is scrubbed of the API key.
+
+    Subclasses HTTPError so callers can keep inspecting `response.status_code`.
+    """
+
+
+class RawgUnavailableError(requests.RequestException):
+    """RAWG could not be reached at all (timeout, connection error, bad JSON)."""
+
+
+def _build_session() -> requests.Session:
+    retry = Retry(
+        total=2,
+        backoff_factor=0.5,
+        status_forcelist=_RETRY_STATUSES,
+        allowed_methods=frozenset(["GET"]),
+        respect_retry_after_header=True,
+        raise_on_status=False,
+    )
+    session = requests.Session()
+    session.mount(f"{BASE_URL}/", HTTPAdapter(max_retries=retry))
+    return session
 
 _YEAR_SUFFIX_RE = re.compile(r'-\d{4}$')
 
@@ -52,16 +90,33 @@ _client = None
 class RawgClient:
 
     def __init__(self, api_key, cache_client):
+        self._api_key = api_key
         self._params = {"key": api_key}
         self._cache = cache_client
+        self._session = _build_session()
+
+    def _scrub(self, text: str) -> str:
+        return text.replace(self._api_key, "***")
 
     def _get(self, path, **params) -> dict:
-        response = requests.get(
-            f"{BASE_URL}{path}",
-            params={**self._params, **params},
-        )
-        response.raise_for_status()
-        return response.json()
+        url = f"{BASE_URL}{path}"
+        # requests puts the full request URL — API key included — in its exception
+        # messages, which then land in logs, so every raise below is scrubbed.
+        try:
+            response = self._session.get(url, params={**self._params, **params}, timeout=_TIMEOUT)
+        except requests.RequestException as e:
+            raise RawgUnavailableError(f"RAWG request to {path} failed: {self._scrub(str(e))}") from None
+
+        if not response.ok:
+            raise RawgHTTPError(
+                f"RAWG returned {response.status_code} for {path}",
+                response=response,
+            )
+
+        try:
+            return response.json()
+        except ValueError as e:
+            raise RawgUnavailableError(f"RAWG returned non-JSON for {path}: {self._scrub(str(e))}") from None
 
     # _fetch_* methods are the cache boundary — raw dicts only.
     # get_* methods are the public API — always return typed models.

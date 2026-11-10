@@ -11,14 +11,11 @@ class CacheClient:
     def __init__(self, supabase):
         self._supabase = supabase
 
-    def get_cache(self, table, key):
-        cache = (
-            self._supabase.table(table)
-            .select('*')
-            .eq("cache_key", key)
-            .gt("expires_at", datetime.now(UTC).isoformat())
-            .execute()
-        )
+    def get_cache(self, table, key, allow_stale=False):
+        query = self._supabase.table(table).select('*').eq("cache_key", key)
+        if not allow_stale:
+            query = query.gt("expires_at", datetime.now(UTC).isoformat())
+        cache = query.execute()
         return cache.data[0]["data"] if cache.data else None
 
     def set_cache(self, table, key, value, ttl_seconds):
@@ -49,7 +46,16 @@ def cached(table, key_fn, ttl_seconds):
                 log.info(f"cache hit for #{key_input}")
                 return {**cached_result, "from_cache": True}
 
-            result = func(self, *args, **kwargs)
+            try:
+                result = func(self, *args, **kwargs)
+            except Exception:
+                # Upstream is down. An expired entry beats a 500, so serve it if we have one.
+                stale = self._cache.get_cache(table, cache_key, allow_stale=True)
+                if stale is None:
+                    raise
+                log.warning(f"upstream failed, serving stale cache for #{key_input}")
+                return {**stale, "from_cache": True, "stale": True}
+
             self._cache.set_cache(table, cache_key, result, ttl_seconds)
             return {**result, "from_cache": False}
         return wrapper
