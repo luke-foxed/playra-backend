@@ -14,7 +14,10 @@ def main(global_config, **settings):
         config.include('pyramid_jinja2')
         config.include('.routes')
         config.add_tween('playra.cors.cors_tween_factory')
-        config.scan()
+        # playra.scripts holds one-off CLI tools (not Pyramid views), some of
+        # which import deps the app itself doesn't need (e.g. psycopg2) --
+        # scanning them in would crash app boot over an unrelated import.
+        config.scan(ignore=['playra.scripts'])
 
         config.set_authentication_policy(SupabaseAuthenticationPolicy())
         config.set_authorization_policy(SupabaseAuthorizationPolicy())
