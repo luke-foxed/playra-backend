@@ -95,7 +95,7 @@ _AGGREGATED_RATING_ORDERINGS = frozenset({"aggregated_rating", "-aggregated_rati
 # already-cached response (same params, same cache key) wrong rather than just
 # stale -- e.g. adding a where-clause. TTL alone doesn't cover that case since the
 # cache key doesn't encode the query logic, only the user-facing params.
-_CACHE_VERSION = 10
+_CACHE_VERSION = 11
 
 _GAME_FIELDS = (
     "id,name,slug,summary,storyline,first_release_date,"
@@ -105,7 +105,7 @@ _GAME_FIELDS = (
     "involved_companies.company.name,involved_companies.developer,involved_companies.publisher,"
     "rating,aggregated_rating,aggregated_rating_count,total_rating,total_rating_count,hypes,"
     "screenshots.image_id,"
-    "artworks.image_id,"
+    "artworks.image_id,artworks.width,artworks.height,"
     "similar_games,"
     "collection.id,collection.name,"
     "websites.url,websites.category,"
@@ -208,9 +208,12 @@ def _normalize_game(row: dict) -> dict:
 
     # Artworks are IGDB's wide, hero-banner-shaped images -- unlike covers (box
     # art, portrait) they're meant to be stretched full-width, so the detail
-    # page's hero banner should use one of these over the cover when available.
-    artworks = row.get("artworks") or []
-    artwork_url = _image_url(artworks[0]["image_id"], size="t_1080p") if artworks and artworks[0].get("image_id") else None
+    # page's hero banner should use one over the cover when available. IGDB
+    # doesn't return them in any size order (e.g. a 256x256 thumbnail can sit
+    # at index 0 ahead of a 3840x2160 version), so pick the largest by area.
+    artworks = [a for a in (row.get("artworks") or []) if a.get("image_id")]
+    best_artwork = max(artworks, key=lambda a: (a.get("width") or 0) * (a.get("height") or 0), default=None)
+    artwork_url = _image_url(best_artwork["image_id"], size="t_1080p") if best_artwork else None
 
     return {
         "id": row["id"],
@@ -507,7 +510,10 @@ class IgdbClient:
             from_cache=cached_result.get("from_cache", False),
         )
 
-    @cached(table="games", key_fn=lambda igdb_id: f"igdb:{igdb_id}", ttl_seconds=_GAME_TTL)
+    # Keyed with _CACHE_VERSION too -- unlike the list caches above, this one
+    # has no other way to invalidate when _GAME_FIELDS changes (it's a plain
+    # per-id key, not built from query params).
+    @cached(table="games", key_fn=lambda igdb_id: f"igdb:{igdb_id}:v{_CACHE_VERSION}", ttl_seconds=_GAME_TTL)
     def _fetch_game(self, igdb_id: int) -> dict:
         rows = self._post("games", f"fields {_GAME_FIELDS}; where id = {igdb_id};")
         return {"rows": rows}
