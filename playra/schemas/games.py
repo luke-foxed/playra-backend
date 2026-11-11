@@ -150,10 +150,13 @@ class GameQuery(BaseModel):
             clauses.append(f"first_release_date >= {_year_start_unix(self.release_year_min)}")
         if self.release_year_max is not None:
             clauses.append(f"first_release_date <= {_year_end_unix(self.release_year_max)}")
+        # aggregated_rating, not total_rating -- this is the "critic score"
+        # filter in the UI. IGDB 400s on any decimal literal here (even
+        # "90.0"), so round to an int rather than interpolating the float directly.
         if self.rating_min is not None:
-            clauses.append(f"total_rating >= {self.rating_min}")
+            clauses.append(f"aggregated_rating >= {round(self.rating_min)}")
         if self.rating_max is not None:
-            clauses.append(f"total_rating <= {self.rating_max}")
+            clauses.append(f"aggregated_rating <= {round(self.rating_max)}")
         return " & ".join(clauses)
 
     def cache_key(self) -> dict:

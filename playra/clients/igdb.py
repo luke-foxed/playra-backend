@@ -95,7 +95,7 @@ _AGGREGATED_RATING_ORDERINGS = frozenset({"aggregated_rating", "-aggregated_rati
 # already-cached response (same params, same cache key) wrong rather than just
 # stale -- e.g. adding a where-clause. TTL alone doesn't cover that case since the
 # cache key doesn't encode the query logic, only the user-facing params.
-_CACHE_VERSION = 9
+_CACHE_VERSION = 10
 
 _GAME_FIELDS = (
     "id,name,slug,summary,storyline,first_release_date,"
