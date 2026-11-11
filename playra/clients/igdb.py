@@ -581,7 +581,7 @@ class IgdbClient:
         ]
         return GameScreenshotsResponse(results=urls, from_cache=cached_result.get("from_cache", False))
 
-    @cached(table="games", key_fn=lambda igdb_id: f"igdb:{igdb_id}:related:v4", ttl_seconds=_GAME_EXTRAS_TTL)
+    @cached(table="games", key_fn=lambda igdb_id: f"igdb:{igdb_id}:related:v5", ttl_seconds=_GAME_EXTRAS_TTL)
     def _fetch_game_related(self, igdb_id: int) -> dict:
         # Collection/similar_games ids aren't known until the base game is
         # fetched, and IGDB's /multiquery can't template on a prior result --
@@ -601,7 +601,8 @@ class IgdbClient:
             coll_rows = self._post(
                 "collections",
                 "fields games.id,games.name,games.slug,games.cover.image_id,"
-                "games.first_release_date,games.genres.id,games.genres.name,games.aggregated_rating;"
+                "games.first_release_date,games.genres.id,games.genres.name,games.aggregated_rating,"
+                "games.platforms.id,games.platforms.name,games.platforms.abbreviation;"
                 f" where id = {collection['id']};",
             )
             if coll_rows:
@@ -615,6 +616,10 @@ class IgdbClient:
                         "first_release_date": g.get("first_release_date"),
                         "genres": [{"id": gen["id"], "name": gen["name"]} for gen in g.get("genres") or []],
                         "aggregated_rating": g.get("aggregated_rating"),
+                        "platforms": [
+                            {"id": p["id"], "name": p["name"], "abbreviation": p.get("abbreviation")}
+                            for p in g.get("platforms") or []
+                        ],
                     }
                     for g in (coll_rows[0].get("games") or [])
                     if g.get("id") != igdb_id
@@ -627,7 +632,8 @@ class IgdbClient:
             sim_rows = self._post(
                 "games",
                 "fields id,name,slug,cover.image_id,first_release_date,"
-                "aggregated_rating,genres.id,genres.name;"
+                "aggregated_rating,genres.id,genres.name,"
+                "platforms.id,platforms.name,platforms.abbreviation;"
                 f" where id = ({ids_clause});",
             )
             similar_games = [
@@ -639,6 +645,10 @@ class IgdbClient:
                     "first_release_date": g.get("first_release_date"),
                     "genres": [{"id": gen["id"], "name": gen["name"]} for gen in g.get("genres") or []],
                     "aggregated_rating": g.get("aggregated_rating"),
+                    "platforms": [
+                        {"id": p["id"], "name": p["name"], "abbreviation": p.get("abbreviation")}
+                        for p in g.get("platforms") or []
+                    ],
                 }
                 for g in sim_rows
             ]
