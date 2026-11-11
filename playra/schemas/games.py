@@ -41,6 +41,7 @@ class GameResponse(GameSummaryResponse):
     publishers: list[str] = []
     screenshot_urls: list[str] = []
     artwork_url: str | None = None  # wide hero-banner image; falls back to cover_url if absent
+    cover_url_large: str | None = None  # 2x-resolution cover for the detail page's big poster
     website: str | None = None
     from_cache: bool = Field(default=False, exclude=True)
 

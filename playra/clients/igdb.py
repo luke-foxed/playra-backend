@@ -517,7 +517,10 @@ class IgdbClient:
         rows = cached_result["rows"]
         if not rows:
             raise IgdbNotFoundError(f"No IGDB game with id {igdb_id}")
-        game = GameResponse(**_normalize_game(rows[0]))
+        row = rows[0]
+        normalized = _normalize_game(row)
+        normalized["cover_url_large"] = _image_url((row.get("cover") or {}).get("image_id"), size="t_cover_big_2x")
+        game = GameResponse(**normalized)
         game.from_cache = cached_result.get("from_cache", False)
         return game
 
